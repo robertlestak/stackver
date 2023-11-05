@@ -205,3 +205,37 @@ The default working directory is `/stack`, so if you mount your stack manifests 
 For example, you could run it as a GitHub Action on a schedule to track the versions of your stack dependencies over time and commit the reports to your repository. This would allow you to track the versions of your stack dependencies over time, as well as provide a historical record of the status of your stack. 
 
 You could also use the `prometheus` output format and `node_exporter` to track the status of your stack dependencies over time in a Prometheus/Grafana dashboard, and alert you with Grafana's native alerting system.
+
+### GitHub Action
+
+`stackver` is published as a GitHub Action which you can use in your existing workflows. For example:
+
+```yaml
+name: stackver
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '0 0 * * *'
+
+jobs:
+  stackver:
+    runs-on: ubuntu-latest
+    # let stackver access the repository
+    permissions:
+      contents: write
+    steps:
+    # checkout manifests
+    - uses: actions/checkout@v4
+    # run stackver and commit the reports to the repository
+    - uses: robertlestak/stackver@main
+      with:
+        stack: la0
+        output: reports/la0
+        githubToken: ${{ secrets.GITHUB_TOKEN }}
+```
+
+This will run `stackver` on a schedule and commit the reports to the `reports/la0` directory in your repository. You can then use this to track the versions of your stack dependencies over time, as well as provide a historical record of the status of your stack.
+
+Note that you must checkout your repository before running `stackver` so it can access your stack manifests. You must also provide a `githubToken` so `stackver` can access the GitHub API if you want to use the `github` tracker and/or push the reports back to your repository.

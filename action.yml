@@ -62,6 +62,10 @@ runs:
       DAYS_UNTIL_WARNING: ${{ inputs.daysUntilWarning }}
       GITHUB_TOKEN: ${{ inputs.githubToken }}
     run: |
+      OUTPATH=""
+      if [[ -n "${OUTPUT}" ]]; then
+        OUTPATH="/output"
+      fi
       docker run --rm \
         -v ${PWD}/${INPUT}:/stack \
         -v ${PWD}/${OUTPUT}:/output \
@@ -72,7 +76,7 @@ runs:
         -o ${FORMAT} \
         -d ${DAYS_UNTIL_DANGER} \
         -w ${DAYS_UNTIL_WARNING} \
-        ${OUTPUT}
+        ${OUTPATH}
 
   - name: Push changes
     if: ${{ inputs.commit == 'true' }}
