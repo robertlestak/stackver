@@ -104,7 +104,7 @@ func main() {
 	})
 	l.Debug("starting stackver")
 	stackFile := flag.String("f", "", "stack file")
-	format := flag.String("o", "text", "output format")
+	format := flag.String("o", "text", "output format. options: text, json, yaml, csv, prometheus")
 	daysUntilWarning := flag.Int("w", 60, "days until warning")
 	daysUntilDanger := flag.Int("d", 30, "days until danger")
 	printVersion := flag.Bool("v", false, "print version")

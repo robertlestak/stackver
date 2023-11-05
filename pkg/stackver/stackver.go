@@ -1,6 +1,7 @@
 package stackver
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"os"
@@ -11,6 +12,14 @@ import (
 	"github.com/rodaine/table"
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
+)
+
+const (
+	FormatJSON       = "json"
+	FormatYAML       = "yaml"
+	FormatText       = "text"
+	FormatCSV        = "csv"
+	FormatPrometheus = "prometheus"
 )
 
 type ObjectMeta struct {
@@ -140,19 +149,21 @@ func (s *Stack) Output(format string, file string) error {
 		defer f.Close()
 	}
 	switch format {
-	case "json":
+	case FormatJSON:
 		// make it pretty
 		enc := json.NewEncoder(f)
 		enc.SetIndent("", "  ")
 		err = enc.Encode(s)
-	case "yaml":
+	case FormatYAML:
 		// add a doc separator
 		f.WriteString("---\n")
 		err = yaml.NewEncoder(f).Encode(s)
-	case "text":
+	case FormatText:
 		err = s.outputText(f)
-	case "prometheus":
+	case FormatPrometheus:
 		err = s.outputPrometheus(f)
+	case FormatCSV:
+		err = s.outputCSV(f)
 	default:
 		err = errors.New("invalid format")
 	}
@@ -174,6 +185,32 @@ func (s *Stack) outputText(f *os.File) error {
 		tbl.AddRow(d.Name, d.Version, d.Status.LatestVersion, eolDate, d.Status.Status, d.Status.Link)
 	}
 	tbl.Print()
+	return nil
+}
+
+func (s *Stack) outputCSV(f *os.File) error {
+	writer := csv.NewWriter(f)
+	defer writer.Flush()
+
+	header := []string{"Name", "Version", "Latest", "EOL Date", "Status", "Link"}
+	if err := writer.Write(header); err != nil {
+		return err
+	}
+
+	for _, d := range s.Spec.Dependencies {
+		var eolDate string
+		if d.Status.CurrentVersionEOLDate != nil && !d.Status.CurrentVersionEOLDate.IsZero() {
+			eolDate = d.Status.CurrentVersionEOLDate.Format("2006-01-02")
+		} else {
+			eolDate = "unknown"
+		}
+
+		row := []string{d.Name, d.Version, d.Status.LatestVersion, eolDate, string(d.Status.Status), d.Status.Link}
+
+		if err := writer.Write(row); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

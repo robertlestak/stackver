@@ -11,7 +11,7 @@ inputs:
   format:
     description: 'Output format'
     required: true
-    default: 'text'
+    default: 'csv'
   daysUntilDanger:
     description: 'Days until danger'
     required: true
