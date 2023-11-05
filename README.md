@@ -108,8 +108,8 @@ The `csv` output format will output a simple CSV report of the current status of
 Name,Version,Latest,EOL Date,Status,Link
 kubernetes,1.27.3,1.28.3,2024-06-28,good,https://endoflife.date/kubernetes
 istio,1.19.3,1.19.3,2024-03-31,current,https://endoflife.date/istio
-cert-manager,1.13.1,1.13.2,unknown,good,
-cert-manager-sync,a22c122,a22c122,unknown,current,
+cert-manager,1.13.1,1.13.2,unknown,good
+cert-manager-sync,a22c122,a22c122,unknown,current
 ```
 
 This is useful for importing into other tools such as spreadsheets. GitHub UI also supports rendering CSV files, so you can simply commit the CSV reports to your repository and view them in the GitHub UI.
