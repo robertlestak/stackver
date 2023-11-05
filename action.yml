@@ -1,0 +1,85 @@
+---
+name: 'stackver'
+description: 'Check stack versions'
+inputs:
+  stack:
+    description: 'Stack file/directory, relative to the repository root'
+    required: true
+  output:
+    description: 'Output file/directory, relative to the repository root'
+    required: false
+  format:
+    description: 'Output format'
+    required: true
+    default: 'text'
+  daysUntilDanger:
+    description: 'Days until danger'
+    required: true
+    default: "30"
+  daysUntilWarning:
+    description: 'Days until warning'
+    required: true
+    default: "60"
+  stackVerVersion:
+    description: 'StackVer version'
+    required: true
+    default: "latest"
+  githubToken:
+    description: 'GitHub token'
+    required: false
+  commit:
+    description: 'Commit report'
+    required: false
+    default: "true"
+  commitMessage:
+    description: 'Commit message'
+    required: false
+    default: "Update stack versions"
+  commitBranch:
+    description: 'Commit branch'
+    required: false
+    default: "main"
+  
+
+runs:
+  using: "composite"
+  steps:
+  - name: Check Runner OS
+    if: ${{ runner.os != 'Linux' }}
+    shell: bash
+    run: |
+      echo "::error title=⛔ error hint::Support Linux Only"
+      exit 1
+
+  - name: Check Stack Version
+    shell: bash
+    env:
+      STACKVER_VERSION: ${{ inputs.stackVerVersion }}
+      INPUT: ${{ inputs.stack }}
+      OUTPUT: ${{ inputs.output }}
+      FORMAT: ${{ inputs.format }}
+      DAYS_UNTIL_DANGER: ${{ inputs.daysUntilDanger }}
+      DAYS_UNTIL_WARNING: ${{ inputs.daysUntilWarning }}
+      GITHUB_TOKEN: ${{ inputs.githubToken }}
+    run: |
+      docker run --rm \
+        -v ${PWD}/${INPUT}:/stack \
+        -v ${PWD}/${OUTPUT}:/output \
+        -e GITHUB_TOKEN=${GITHUB_TOKEN} \
+        -w /output \
+        robertlestak/stackver:${STACKVER_VERSION} \
+        -f /stack \
+        -o ${FORMAT} \
+        -d ${DAYS_UNTIL_DANGER} \
+        -w ${DAYS_UNTIL_WARNING} \
+        ${OUTPUT}
+
+  - name: Push changes
+    if: ${{ inputs.commit == 'true' }}
+    uses: actions-js/push@master
+    with:
+      github_token: ${{ inputs.githubToken }}
+      message: ${{ inputs.commitMessage }}
+      branch: ${{ inputs.commitBranch }}
+  
+      
