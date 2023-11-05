@@ -259,7 +259,7 @@ jobs:
         githubToken: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-This will run `stackver` on a schedule and commit the reports to the `reports/la0` directory in your repository. You can then use this to track the versions of your stack dependencies over time, as well as provide a historical record of the status of your stack.
+This will run `stackver` on a schedule and commit the reports to the `reports/stack-manifests` directory in your repository. You can then use this to track the versions of your stack dependencies over time, as well as provide a historical record of the status of your stack.
 
 Note that you must checkout your repository before running `stackver` so it can access your stack manifests. You must also provide a `githubToken` so `stackver` can access the GitHub API if you want to use the `github` tracker and/or push the reports back to your repository.
 
