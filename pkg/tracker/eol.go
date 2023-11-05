@@ -15,7 +15,7 @@ type EOLRelease struct {
 	Cycle             string `json:"cycle"`
 	ReleaseDate       string `json:"releaseDate"`
 	Support           any    `json:"support"`
-	Eol               string `json:"eol"`
+	Eol               any    `json:"eol"`
 	Latest            string `json:"latest"`
 	LatestReleaseDate string `json:"latestReleaseDate"`
 	Lts               bool   `json:"lts"`
@@ -69,15 +69,27 @@ func (t *EndOfLifeDateTracker) GetStatus(currentVersion string) (ServiceStatus, 
 		for _, r := range releases {
 			if utils.CycleContainsVersion(r.Cycle, currentVersion) {
 				l.Debugf("found current version %s in cycle %s", currentVersion, r.Cycle)
-				// try to parse the EOL as date in format YYYY-MM-DD
-				// if it fails, then try as bool
-				eol, err := time.Parse("2006-01-02", r.Eol)
-				if err != nil {
-					// try bool
-					if r.Eol == "true" {
+				// if r.Eol is bool, set eol to time.Now
+				// otherwise parse the date string
+				var eol time.Time
+				if r.Eol == nil {
+					eol = time.Time{}
+				}
+				if _, ok := r.Eol.(bool); ok {
+					if r.Eol.(bool) {
 						eol = time.Now()
 					} else {
 						eol = time.Time{}
+					}
+				} else {
+					eol, err = time.Parse("2006-01-02", r.Eol.(string))
+					if err != nil {
+						// try bool
+						if r.Eol == "true" {
+							eol = time.Now()
+						} else {
+							eol = time.Time{}
+						}
 					}
 				}
 				stat.CurrentVersionEOLDate = &eol
