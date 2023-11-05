@@ -29,10 +29,11 @@ type ObjectMeta struct {
 }
 
 type Service struct {
-	Name    string                     `json:"name" yaml:"name"`
-	Version string                     `json:"version" yaml:"version"`
-	Tracker tracker.ServiceTrackerMeta `json:"tracker" yaml:"tracker"`
-	Status  tracker.ServiceStatus      `json:"status" yaml:"status"`
+	Name        string                     `json:"name" yaml:"name"`
+	Description string                     `json:"description,omitempty" yaml:"description,omitempty"`
+	Version     string                     `json:"version" yaml:"version"`
+	Tracker     tracker.ServiceTrackerMeta `json:"tracker" yaml:"tracker"`
+	Status      tracker.ServiceStatus      `json:"status" yaml:"status"`
 }
 
 type StackSpec struct {
