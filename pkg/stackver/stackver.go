@@ -14,7 +14,9 @@ import (
 )
 
 type ObjectMeta struct {
-	Name string `json:"name" yaml:"name"`
+	Name        string            `json:"name" yaml:"name"`
+	Labels      map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty" yaml:"annotations,omitempty"`
 }
 
 type Service struct {
