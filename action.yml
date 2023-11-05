@@ -79,7 +79,7 @@ runs:
         ${OUTPATH}
 
   - name: Push changes
-    if: ${{ inputs.commit == 'true' }}
+    if: ${{ inputs.githubToken != '' && inputs.commit == 'true' }}
     uses: actions-js/push@master
     with:
       github_token: ${{ inputs.githubToken }}
