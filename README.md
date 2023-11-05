@@ -4,6 +4,25 @@
 
 `stackver` is a tool to help you do just that. It will take a list of your stack dependencies and utilize predefined upstream `trackers` to find any new releases. It will then compare these new releases to your current stack and output a report of any new releases, as well as notify you of if/when your current versions go EOL. This gives your technical teams visibility to and lead time on any upcoming changes to your stack, so they can be adeuqately integration tested in test environments before being deployed to production.
 
+- [stackver](#stackver)
+  - [Example Manifest](#example-manifest)
+    - [Manifest Metadata](#manifest-metadata)
+    - [Manifest Spec](#manifest-spec)
+      - [Depdenency](#depdenency)
+  - [Trackers](#trackers)
+    - [endoflife](#endoflife)
+    - [github](#github)
+  - [Outputs](#outputs)
+    - [text](#text)
+    - [yaml](#yaml)
+    - [json](#json)
+    - [prometheus](#prometheus)
+  - [Usage](#usage)
+    - [Docker Usage](#docker-usage)
+  - [Automated Usage](#automated-usage)
+    - [GitHub Action](#github-action)
+      - [Inputs](#inputs)
+
 ## Example Manifest
 
 `stackver` is configured with a YAML (or JSON) manifest. This manifest should contain all of the dependencies in this stack, and their current versions. For example:
