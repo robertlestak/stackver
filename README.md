@@ -246,3 +246,18 @@ jobs:
 This will run `stackver` on a schedule and commit the reports to the `reports/la0` directory in your repository. You can then use this to track the versions of your stack dependencies over time, as well as provide a historical record of the status of your stack.
 
 Note that you must checkout your repository before running `stackver` so it can access your stack manifests. You must also provide a `githubToken` so `stackver` can access the GitHub API if you want to use the `github` tracker and/or push the reports back to your repository.
+
+#### Inputs
+
+| Name | Description | Required | Default |
+| --- | --- | --- | --- |
+| `stack` | The path to your stack manifests. This can be a single file or a directory. If a directory is provided, `stackver` will search for all `.yaml` and `.json` files and evaluate them all. | `true` | N/A |
+| `output` | The path to write the reports to. If a directory is provided, `stackver` will write the reports to the provided directory with the same name as the manifest. If a file is provided, `stackver` will write the reports to the provided file. | `false` | `stdout` |
+| `githubToken` | A GitHub personal access token to use to access the GitHub API. This is required if you want to use the `github` tracker and/or push the reports back to your repository. | `false` | N/A |
+| `daysUntilWarning` | The number of days until a warning should be generated. | `false` | `60` |
+| `daysUntilDanger` | The number of days until a danger should be generated. | `false` | `30` |
+| `format` | The output format to use. | `false` | `text` |
+| `stackVerVersion` | The version of `stackver` to use. | `false` | `latest` |
+| `commit` | Whether or not to commit the reports back to the repository. | `false` | `true` |
+| `commitMessage` | The commit message to use. | `false` | `Update stack versions` |
+| `commitBranch` | The branch to commit the reports to. | `false` | `main` |
