@@ -2,7 +2,7 @@
 
 `stackver` is a tool to help track the versions of your stack dependencies. As systems become more microservice oriented, it is critical to stay on top of your version dependencies to ensure you are not running into any security vulnerabilities or functional regressions. While a CMDB is good at tracking the _historic_ versions of your stack, it is often difficult to relate these to their _current_ upstream versions.
 
-`stackver` is a tool to help you do just that. It will take a list of your stack dependencies and utilize predefined upstream `trackers` to find any new releases. It will then compare these new releases to your current stack and output a report of any new releases, as well as notify you of if/when your current versions go EOL. This gives your technical teams visibility to and lead time on any upcoming changes to your stack, so they can be adeuqately integration tested in test environments before being deployed to production.
+`stackver` is a tool to help you do just that. It will take a list of your stack dependencies and utilize predefined upstream `trackers` to find any new releases. It will then compare these new releases to your current stack and output a report of any new releases, as well as notify you of if/when your current versions go EOL. This gives your technical teams visibility to and lead time on any upcoming changes to your stack, so they can be adequately integration tested in test environments before being deployed to production.
 
 - [stackver](#stackver)
   - [Example Manifest](#example-manifest)
