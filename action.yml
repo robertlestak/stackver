@@ -66,7 +66,7 @@ runs:
       if [[ -n "${OUTPUT}" ]]; then
         OUTPATH="/output"
       fi
-      docker run --rm \
+      docker run --rm --net=host \
         -v ${PWD}/${INPUT}:/stack \
         -v ${PWD}/${OUTPUT}:/output \
         -e GITHUB_TOKEN=${GITHUB_TOKEN} \
