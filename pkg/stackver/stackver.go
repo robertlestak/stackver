@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"slices"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/robertlestak/stackver/pkg/tracker"
@@ -15,8 +14,7 @@ import (
 )
 
 type ObjectMeta struct {
-	Name        string     `json:"name" yaml:"name"`
-	LastChecked *time.Time `json:"lastChecked,omitempty" yaml:"lastChecked,omitempty"`
+	Name string `json:"name" yaml:"name"`
 }
 
 type Service struct {
@@ -120,8 +118,6 @@ func (s *Stack) CheckVersions() error {
 		}
 	}
 	s.Spec.Dependencies = reorderedDeps
-	t := time.Now()
-	s.ObjectMeta.LastChecked = &t
 	return nil
 }
 

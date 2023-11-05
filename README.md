@@ -51,7 +51,7 @@ spec:
 
 ### Manifest Metadata
 
-This contains the metadata for the manifest itself. Currently, the only required field is `name`, which is used to identify the manifest in the output. This is useful if you are tracking multiple stacks. `stackver` will update this will the current date/time when it is run.
+This contains the metadata for the manifest itself. Currently, the only required field is `name`, which is used to identify the manifest in the output. This is useful if you are tracking multiple stacks.
 
 ### Manifest Spec
 
@@ -107,7 +107,6 @@ The `yaml` output format will output a more detailed YAML report of the current 
 ---
 metadata:
     name: stack
-    lastChecked: 2023-11-05T09:24:37.201307-08:00
 spec:
     dependencies:
       - name: kubernetes
@@ -118,7 +117,6 @@ spec:
         status:
             latestVersion: 1.28.3
             currentVersionEOLDate: 2024-06-28T00:00:00Z
-            currentVersionEOLIn: 5646h35m23.684825s
             link: https://endoflife.date/kubernetes
             status: good
       - name: istio
@@ -129,7 +127,6 @@ spec:
         status:
             latestVersion: 1.19.3
             currentVersionEOLDate: 2024-03-31T00:00:00Z
-            currentVersionEOLIn: 3510h35m23.684845s
             link: https://endoflife.date/istio
             status: current
       - name: cert-manager

@@ -45,11 +45,10 @@ var (
 )
 
 type ServiceStatus struct {
-	LatestVersion         string         `json:"latestVersion,omitempty" yaml:"latestVersion,omitempty"`
-	CurrentVersionEOLDate *time.Time     `json:"currentVersionEOLDate,omitempty" yaml:"currentVersionEOLDate,omitempty"`
-	CurrentVersionEOLIn   *time.Duration `json:"currentVersionEOLIn,omitempty" yaml:"currentVersionEOLIn,omitempty"`
-	Link                  string         `json:"link,omitempty" yaml:"link,omitempty"`
-	Status                StatusString   `json:"status,omitempty" yaml:"status,omitempty"`
+	LatestVersion         string       `json:"latestVersion,omitempty" yaml:"latestVersion,omitempty"`
+	CurrentVersionEOLDate *time.Time   `json:"currentVersionEOLDate,omitempty" yaml:"currentVersionEOLDate,omitempty"`
+	Link                  string       `json:"link,omitempty" yaml:"link,omitempty"`
+	Status                StatusString `json:"status,omitempty" yaml:"status,omitempty"`
 }
 
 func (s *ServiceStatus) CalculateStatus(currentVersion string) {

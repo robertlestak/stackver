@@ -81,8 +81,6 @@ func (t *EndOfLifeDateTracker) GetStatus(currentVersion string) (ServiceStatus, 
 					}
 				}
 				stat.CurrentVersionEOLDate = &eol
-				u := time.Until(eol)
-				stat.CurrentVersionEOLIn = &u
 				stat.CalculateStatus(currentVersion)
 			}
 		}
