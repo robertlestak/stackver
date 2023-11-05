@@ -213,14 +213,21 @@ You could also use the `prometheus` output format and `node_exporter` to track t
 ```yaml
 name: stackver
 on:
+  # check on every push to main branch
   push:
     branches:
       - main
+    # only check stack manifest changes
+    paths:
+      - 'stack-manifests/**'
+
+  # check every day at midnight
   schedule:
     - cron: '0 0 * * *'
 
 jobs:
   stackver:
+    # this must be run on a linux machine
     runs-on: ubuntu-latest
     # let stackver access the repository
     permissions:
@@ -231,8 +238,8 @@ jobs:
     # run stackver and commit the reports to the repository
     - uses: robertlestak/stackver@main
       with:
-        stack: la0
-        output: reports/la0
+        stack: stack-manifests
+        output: reports/stack-manifests
         githubToken: ${{ secrets.GITHUB_TOKEN }}
 ```
 
