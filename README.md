@@ -213,7 +213,7 @@ Usage of stackver:
 $ stackver -f stack.yaml -o yaml > stack.yaml
 ```
 
-If `-f` is a directory, `stackver` will recursively search for all `.yaml` and `.json` files and evaluate them all. When in directory mode, if an argument is passed, it will be used as the output directory. For example:
+If `-f` is a directory, `stackver` will search for all `.yaml` and `.json` files and evaluate them all. When in directory mode, if an argument is passed, it will be used as the output directory. For example:
 
 ```bash
 $ stackver -f stack -o yaml stack-reports
