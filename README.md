@@ -337,6 +337,7 @@ jobs:
         githubToken: ${{ secrets.GITHUB_TOKEN }}
         prTitle: "🔄 Update dependency versions"
         prBranch: "stackver/updates"
+        baseBranch: "develop"  # Create PR against develop branch instead of main
 ```
 
 This will:
@@ -356,6 +357,7 @@ This will:
 | `dryRun` | Only show what would be updated | `false` | `false` |
 | `prTitle` | Pull request title | `false` | `Update dependency versions` |
 | `prBranch` | Branch name for pull request | `false` | `stackver/update-dependencies` |
+| `baseBranch` | Base branch to create PR against | `false` | Repository default branch |
 | `daysUntilWarning` | Days until warning status | `false` | `60` |
 | `daysUntilDanger` | Days until danger status | `false` | `30` |
 | `stackVerVersion` | Version of stackver to use | `false` | `latest` |

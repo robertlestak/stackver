@@ -32,6 +32,9 @@ inputs:
     description: 'Branch name for pull request'
     required: false
     default: "stackver/update-dependencies"
+  baseBranch:
+    description: 'Base branch to create PR against (defaults to repository default branch)'
+    required: false
 
 runs:
   using: "composite"
@@ -88,11 +91,16 @@ runs:
         DAYS_UNTIL_WARNING: ${{ inputs.daysUntilWarning }}
         GITHUB_TOKEN: ${{ inputs.githubToken }}
         PR_BRANCH_BASE: ${{ inputs.prBranch }}
+        BASE_BRANCH: ${{ inputs.baseBranch }}
       run: |
         echo "::group::Applying dependency updates"
         
-        # Get default branch name
-        DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
+        # Use provided base branch or detect default branch
+        if [ -n "$BASE_BRANCH" ]; then
+          DEFAULT_BRANCH="$BASE_BRANCH"
+        else
+          DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
+        fi
         echo "DEFAULT_BRANCH=${DEFAULT_BRANCH}" >> $GITHUB_ENV
         
         # Generate unique branch name with timestamp
