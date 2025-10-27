@@ -11,9 +11,13 @@ As systems become more microservice oriented, it is critical to stay on top of y
     - [Manifest Spec](#manifest-spec)
       - [Dependency](#dependency)
       - [Sources](#sources)
+      - [Version Offset](#version-offset)
+      - [Prerelease Handling](#prerelease-handling)
   - [Trackers](#trackers)
     - [endoflife](#endoflife)
     - [github](#github)
+    - [helm](#helm)
+    - [git](#git)
   - [Usage](#usage)
     - [Status Mode (Default)](#status-mode-default)
     - [Update Mode](#update-mode)
@@ -59,6 +63,11 @@ stackver -f stack.yaml -update
 metadata:
   name: stack
 spec:
+  # Global configuration
+  ignoreLatest: true        # Skip "latest" tags
+  acceptPrerelease: false   # Filter out prerelease versions (default: false)
+  offset: 1                 # Use N-1 versions globally (0=latest, 1=N-1, 2=N-2, etc.)
+  
   dependencies:
   - name: nginx
     sources:
@@ -69,6 +78,8 @@ spec:
     tracker:
       kind: endoflife
       uri: nginx
+    offset: 2               # Override global: use N-2 for this service
+    
   - name: cert-manager
     sources:
     - file: helm/cert-manager/values.yaml
@@ -76,6 +87,22 @@ spec:
     tracker:
       kind: github
       uri: cert-manager/cert-manager
+      
+  - name: kyverno
+    sources:
+    - file: argocd/kyverno.yaml
+      selector: $.spec.sources[0].targetRevision
+    tracker:
+      kind: helm
+      uri: https://kyverno.github.io/kyverno/kyverno
+      
+  - name: kube-janitor
+    sources:
+    - file: k8s/kube-janitor.yaml
+      selector: $.spec.template.spec.containers[0].image
+    tracker:
+      kind: git
+      uri: https://codeberg.org/hjacobs/kube-janitor.git
 ```
 
 ### Manifest Metadata
@@ -115,9 +142,45 @@ Supported selector formats:
 - Nested keys: `$.image.tag`
 - Array indexing: `$.containers[0].name`
 
+#### Version Offset
+
+Control which version to target instead of always using the latest:
+
+```yaml
+spec:
+  offset: 1  # Global: use N-1 versions for all services
+  dependencies:
+  - name: nginx
+    offset: 2  # Service-level: use N-2 for this service (overrides global)
+  - name: redis
+    # Uses global offset: 1 (N-1)
+```
+
+- `offset: 0` = Latest version (default)
+- `offset: 1` = N-1 (previous version)
+- `offset: 2` = N-2 (two versions back)
+- Service-level offset overrides global offset
+- Perfect for conservative update strategies and compliance requirements
+
+#### Prerelease Handling
+
+Control whether to include prerelease versions:
+
+```yaml
+spec:
+  acceptPrerelease: false  # Global: filter out prereleases (default: false)
+  dependencies:
+  - name: nginx
+    # Uses global setting: false (no prereleases)
+```
+
+- `acceptPrerelease: false` = Skip rc, alpha, beta, dev versions (default, safe)
+- `acceptPrerelease: true` = Include prerelease versions
+- Automatically detects common prerelease patterns: `-rc`, `-alpha`, `-beta`, `-dev`, `-snapshot`, `-pre`
+
 ## Trackers
 
-`stackver` uses `trackers` to find new releases of your dependencies. A tracker is a simple Go interface that implements a `GetStatus` method. This method should retrieve the latest release details from the defined upstream, compare those against the currrent version, and return a `ServiceStatus` object. The following trackers are currently implemented:
+`stackver` uses `trackers` to find new releases of your dependencies. A tracker is a simple Go interface that implements a `GetStatus` method. This method should retrieve the latest release details from the defined upstream, compare those against the current version, and return a `ServiceStatus` object. The following trackers are currently implemented:
 
 ### endoflife
 
@@ -125,13 +188,54 @@ The `endoflife` tracker uses the [endoflife.date](https://endoflife.date) API to
 
 `endoflife` returns a full EOL date, enabling `stackver` to notify you of upcoming EOLs relative to the current date. This is the ideal tracker to use for most dependencies.
 
+```yaml
+tracker:
+  kind: endoflife
+  uri: nginx
+```
+
 ### github
 
 The `github` tracker uses the [GitHub API](https://docs.github.com/en/rest) to track the latest releases of your dependencies. It will first try to find the version by the `/releases` API. If a release with the defined version is not found, it will fallback to searching by the commit hash in the `/commits` API.
 
 Since `github` will only return the release itself and not meta information such as support cycles or EOL dates, `stackver` will not be able to notify you of upcoming EOLs. Instead, it will simply be able to notify you of new releases, so you will at least know when a new version is available.
 
+```yaml
+tracker:
+  kind: github
+  uri: cert-manager/cert-manager
+```
+
 *Note*: The GitHub API uses aggressive rate limits, so you'll probably want to set the `GITHUB_TOKEN` environment variable to a [personal access token](https://docs.github.com/en/github/authenticating-to-github/creating-a-personal-access-token). This will increase your rate limit from 60 requests per hour to 5000 requests per hour.
+
+### helm
+
+The `helm` tracker queries Helm repository index files directly to get accurate chart versions. This is essential for tracking Helm chart versions which often differ from application release versions.
+
+```yaml
+tracker:
+  kind: helm
+  uri: https://kyverno.github.io/kyverno/kyverno
+```
+
+The URI format is `{helm_repo_url}/{chart_name}`. The tracker fetches the repository's `index.yaml` file and extracts chart versions, providing accurate Helm-specific version tracking.
+
+### git
+
+The `git` tracker uses the Git protocol to fetch tags from any Git hosting provider. This is useful when GitHub API is not available or when working with self-hosted Git servers, archived repositories, or alternative Git hosting providers.
+
+```yaml
+tracker:
+  kind: git
+  uri: https://codeberg.org/hjacobs/kube-janitor.git
+```
+
+Works with:
+- GitHub, GitLab, Codeberg, Gitea
+- Self-hosted Git servers
+- Any Git repository with tags
+
+Uses `git ls-remote --tags` for lightweight tag fetching without cloning.
 
 ## Usage
 
@@ -158,6 +262,11 @@ Show current status of dependencies:
 stackver -f stack.yaml
 ```
 
+Output includes:
+- Current vs latest versions
+- Status indicators (current, good, update-available, warning, danger, critical)
+- Downgrade warnings for potential configuration issues
+
 ### Update Mode
 
 Dependabot-like functionality that can update your deployment files:
@@ -170,7 +279,12 @@ stackver -f stack.yaml -dry-run
 stackver -f stack.yaml -update
 ```
 
-stackver will surgically update ONLY the version numbers while preserving all formatting, comments, and whitespace in your files.
+stackver will surgically update ONLY the version numbers while preserving all formatting, comments, and whitespace in your files. It includes:
+
+- **Template-aware parsing**: Handles Helm templates and Go templating syntax
+- **Downgrade detection**: Warns about potential downgrades due to configuration issues
+- **Surgical updates**: Preserves file formatting, comments, and structure
+- **Multi-source support**: Updates all configured source files for each dependency
 
 ### Docker Usage
 

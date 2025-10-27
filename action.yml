@@ -36,103 +36,149 @@ inputs:
 runs:
   using: "composite"
   steps:
-  - name: Check Runner OS
-    if: ${{ runner.os != 'Linux' }}
-    shell: bash
-    run: |
-      echo "::error title=⛔ error hint::Support Linux Only"
-      exit 1
+    - name: Check Runner OS
+      if: ${{ runner.os != 'Linux' }}
+      shell: bash
+      run: |
+        echo "::error title=⛔ error hint::Support Linux Only"
+        exit 1
 
-  - name: Setup Git
-    shell: bash
-    run: |
-      git config --global user.name "stackver[bot]"
-      git config --global user.email "stackver[bot]@users.noreply.github.com"
+    - name: Setup Git and GitHub CLI
+      shell: bash
+      run: |
+        git config --global user.name "stackver[bot]"
+        git config --global user.email "stackver[bot]@users.noreply.github.com"
+        
+        # Install GitHub CLI if not present
+        if ! command -v gh &> /dev/null; then
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt update
+          sudo apt install gh -y
+        fi
 
-  - name: Check for Updates (Dry Run)
-    shell: bash
-    env:
-      STACKVER_VERSION: ${{ inputs.stackVerVersion }}
-      STACK_FILE: ${{ inputs.stack }}
-      DAYS_UNTIL_DANGER: ${{ inputs.daysUntilDanger }}
-      DAYS_UNTIL_WARNING: ${{ inputs.daysUntilWarning }}
-      GITHUB_TOKEN: ${{ inputs.githubToken }}
-    run: |
-      docker run --rm \
-        -v ${PWD}:/workspace \
-        -w /workspace \
-        -e GITHUB_TOKEN=${GITHUB_TOKEN} \
-        robertlestak/stackver:${STACKVER_VERSION} \
-        -f ${STACK_FILE} \
-        -d ${DAYS_UNTIL_DANGER} \
-        -w ${DAYS_UNTIL_WARNING} \
-        -dry-run
+    - name: Check for Updates (Dry Run)
+      shell: bash
+      env:
+        STACKVER_VERSION: ${{ inputs.stackVerVersion }}
+        STACK_FILE: ${{ inputs.stack }}
+        DAYS_UNTIL_DANGER: ${{ inputs.daysUntilDanger }}
+        DAYS_UNTIL_WARNING: ${{ inputs.daysUntilWarning }}
+        GITHUB_TOKEN: ${{ inputs.githubToken }}
+      run: |
+        echo "::group::Checking for dependency updates"
+        docker run --rm \
+          -v ${PWD}:/stack \
+          -w /stack \
+          -e GITHUB_TOKEN=${GITHUB_TOKEN} \
+          robertlestak/stackver:${STACKVER_VERSION} \
+          -f ${STACK_FILE} \
+          -d ${DAYS_UNTIL_DANGER} \
+          -w ${DAYS_UNTIL_WARNING} \
+          -dry-run
+        echo "::endgroup::"
 
-  - name: Apply Updates
-    if: ${{ inputs.dryRun != 'true' }}
-    shell: bash
-    env:
-      STACKVER_VERSION: ${{ inputs.stackVerVersion }}
-      STACK_FILE: ${{ inputs.stack }}
-      DAYS_UNTIL_DANGER: ${{ inputs.daysUntilDanger }}
-      DAYS_UNTIL_WARNING: ${{ inputs.daysUntilWarning }}
-      GITHUB_TOKEN: ${{ inputs.githubToken }}
-      PR_BRANCH_BASE: ${{ inputs.prBranch }}
-    run: |
-      # Generate unique branch name with timestamp
-      TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-      PR_BRANCH="${PR_BRANCH_BASE}-${TIMESTAMP}"
-      echo "PR_BRANCH=${PR_BRANCH}" >> $GITHUB_ENV
-      
-      # Create and switch to update branch
-      git checkout -b ${PR_BRANCH}
-      
-      # Apply updates and capture output
-      UPDATE_OUTPUT=$(docker run --rm \
-        -v ${PWD}:/workspace \
-        -w /workspace \
-        -e GITHUB_TOKEN=${GITHUB_TOKEN} \
-        robertlestak/stackver:${STACKVER_VERSION} \
-        -f ${STACK_FILE} \
-        -d ${DAYS_UNTIL_DANGER} \
-        -w ${DAYS_UNTIL_WARNING} \
-        -update 2>&1)
-      
-      echo "$UPDATE_OUTPUT"
-      
-      # Check if there are changes
-      if git diff --quiet; then
-        echo "No updates needed"
-        exit 0
-      fi
-      
-      # Extract updated dependency names from output
-      UPDATED_DEPS=$(echo "$UPDATE_OUTPUT" | grep "Successfully updated" | sed 's/.*Successfully updated \([^:]*\):.*/\1/' | sort -u | tr '\n' ',' | sed 's/,$//')
-      echo "UPDATED_DEPS=${UPDATED_DEPS}" >> $GITHUB_ENV
-      
-      # Commit changes
-      git add .
-      git commit -m "Update dependency versions via stackver: ${UPDATED_DEPS}"
-      git push origin ${PR_BRANCH}
+    - name: Apply Updates
+      if: ${{ inputs.dryRun != 'true' }}
+      shell: bash
+      env:
+        STACKVER_VERSION: ${{ inputs.stackVerVersion }}
+        STACK_FILE: ${{ inputs.stack }}
+        DAYS_UNTIL_DANGER: ${{ inputs.daysUntilDanger }}
+        DAYS_UNTIL_WARNING: ${{ inputs.daysUntilWarning }}
+        GITHUB_TOKEN: ${{ inputs.githubToken }}
+        PR_BRANCH_BASE: ${{ inputs.prBranch }}
+      run: |
+        echo "::group::Applying dependency updates"
+        
+        # Get default branch name
+        DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
+        echo "DEFAULT_BRANCH=${DEFAULT_BRANCH}" >> $GITHUB_ENV
+        
+        # Generate unique branch name with timestamp
+        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+        PR_BRANCH="${PR_BRANCH_BASE}-${TIMESTAMP}"
+        echo "PR_BRANCH=${PR_BRANCH}" >> $GITHUB_ENV
+        
+        # Create and switch to update branch
+        git checkout -b ${PR_BRANCH}
+        
+        # Apply updates and capture output
+        set +e  # Don't exit on error to capture output
+        UPDATE_OUTPUT=$(docker run --rm \
+          -v ${PWD}:/stack \
+          -w /stack \
+          -e GITHUB_TOKEN=${GITHUB_TOKEN} \
+          robertlestak/stackver:${STACKVER_VERSION} \
+          -f ${STACK_FILE} \
+          -d ${DAYS_UNTIL_DANGER} \
+          -w ${DAYS_UNTIL_WARNING} \
+          -update 2>&1)
+        STACKVER_EXIT_CODE=$?
+        set -e
+        
+        echo "$UPDATE_OUTPUT"
+        
+        if [ $STACKVER_EXIT_CODE -ne 0 ]; then
+          echo "::error::Stackver failed with exit code $STACKVER_EXIT_CODE"
+          exit $STACKVER_EXIT_CODE
+        fi
+        
+        # Check if there are changes
+        if git diff --quiet; then
+          echo "::notice::No updates needed"
+          echo "HAS_UPDATES=false" >> $GITHUB_ENV
+          exit 0
+        fi
+        
+        echo "HAS_UPDATES=true" >> $GITHUB_ENV
+        
+        # Extract updated dependency names from output
+        UPDATED_DEPS=$(echo "$UPDATE_OUTPUT" | grep -E "(Successfully updated|Would update)" | sed -E 's/.*(Successfully updated|Would update) ([^:]+):.*/\2/' | sort -u | tr '\n' ',' | sed 's/,$//')
+        echo "UPDATED_DEPS=${UPDATED_DEPS}" >> $GITHUB_ENV
+        
+        # Commit changes
+        git add .
+        git commit -m "Update dependency versions via stackver: ${UPDATED_DEPS}"
+        git push origin ${PR_BRANCH}
+        
+        echo "::endgroup::"
 
-  - name: Create Pull Request
-    if: ${{ inputs.dryRun != 'true' }}
-    shell: bash
-    env:
-      GITHUB_TOKEN: ${{ inputs.githubToken }}
-      PR_TITLE_BASE: ${{ inputs.prTitle }}
-    run: |
-      # Generate PR title with updated dependencies
-      if [ -n "$UPDATED_DEPS" ]; then
-        PR_TITLE="${PR_TITLE_BASE}: ${UPDATED_DEPS}"
-      else
-        TIMESTAMP=$(date +%Y-%m-%d)
-        PR_TITLE="${PR_TITLE_BASE} (${TIMESTAMP})"
-      fi
-      
-      # Create PR
-      gh pr create \
-        --title "${PR_TITLE}" \
-        --body "Automated dependency version updates by stackver. Updated dependencies: ${UPDATED_DEPS:-none}" \
-        --head ${PR_BRANCH} \
-        --base main
+    - name: Create Pull Request
+      if: ${{ inputs.dryRun != 'true' && env.HAS_UPDATES == 'true' }}
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.githubToken }}
+        PR_TITLE_BASE: ${{ inputs.prTitle }}
+      run: |
+        echo "::group::Creating pull request"
+        
+        # Generate PR title with updated dependencies
+        if [ -n "$UPDATED_DEPS" ]; then
+          PR_TITLE="${PR_TITLE_BASE}: ${UPDATED_DEPS}"
+        else
+          TIMESTAMP=$(date +%Y-%m-%d)
+          PR_TITLE="${PR_TITLE_BASE} (${TIMESTAMP})"
+        fi
+        
+        # Create PR body
+        PR_BODY="Automated dependency version updates by stackver.
+
+        ## Updated Dependencies
+        ${UPDATED_DEPS:-none}
+
+        ## Changes
+        This PR contains automated updates to dependency versions as detected by stackver. Please review the changes before merging.
+
+        ---
+        *This PR was created automatically by the stackver GitHub Action.*"
+        
+        # Create PR
+        gh pr create \
+          --title "${PR_TITLE}" \
+          --body "${PR_BODY}" \
+          --head ${PR_BRANCH} \
+          --base ${DEFAULT_BRANCH}
+        
+        echo "::notice::Pull request created: ${PR_TITLE}"
+        echo "::endgroup::"

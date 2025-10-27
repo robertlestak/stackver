@@ -30,6 +30,10 @@ func (t *EndOfLifeDateTracker) Link() string {
 }
 
 func (t *EndOfLifeDateTracker) GetStatus(currentVersion string) (ServiceStatus, error) {
+	return t.GetStatusWithOffset(currentVersion, 0)
+}
+
+func (t *EndOfLifeDateTracker) GetStatusWithOffset(currentVersion string, offset int) (ServiceStatus, error) {
 	l := log.WithFields(log.Fields{
 		"tracker": "endoflife.date",
 		"uri":     t.uri,

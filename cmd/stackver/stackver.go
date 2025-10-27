@@ -10,6 +10,7 @@ import (
 	"github.com/robertlestak/stackver/pkg/selector"
 	"github.com/robertlestak/stackver/pkg/stackver"
 	"github.com/robertlestak/stackver/pkg/tracker"
+	"github.com/robertlestak/stackver/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -71,6 +72,21 @@ func processFileWithUpdate(inFile string, dryRun bool) error {
 	updatesAvailable := false
 	for _, dep := range s.Spec.Dependencies {
 		if dep.Status.LatestVersion != dep.Version() {
+			// Check if we should ignore "latest" tags
+			if s.Spec.IgnoreLatest && dep.Version() == "latest" {
+				l.Warnf("Ignoring update for %s: current version is 'latest' (ignoreLatest=true)", dep.Name)
+				continue
+			}
+			
+			// Check for potential downgrade
+			if dep.Status.Status == tracker.StatusWarning {
+				// Check if it's actually a downgrade
+				if utils.IsDowngrade(dep.Version(), dep.Status.LatestVersion) {
+					l.Warnf("WARNING: Potential downgrade detected for %s: %s -> %s (check repository mapping)", 
+						dep.Name, dep.Version(), dep.Status.LatestVersion)
+				}
+			}
+			
 			updatesAvailable = true
 			l.Infof("Update available for %s: %s -> %s", dep.Name, dep.Version(), dep.Status.LatestVersion)
 			

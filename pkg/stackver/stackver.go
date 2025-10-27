@@ -32,13 +32,17 @@ type Service struct {
 	Sources     []Source                   `json:"sources" yaml:"sources"`
 	Tracker     tracker.ServiceTrackerMeta `json:"tracker" yaml:"tracker"`
 	Status      tracker.ServiceStatus      `json:"status" yaml:"status"`
+	Offset      int                        `json:"offset,omitempty" yaml:"offset,omitempty"`
 
 	// Internal field populated from sources
 	version string
 }
 
 type StackSpec struct {
-	Dependencies []Service `json:"dependencies" yaml:"dependencies"`
+	Dependencies      []Service `json:"dependencies" yaml:"dependencies"`
+	IgnoreLatest      bool      `json:"ignoreLatest,omitempty" yaml:"ignoreLatest,omitempty"`
+	AcceptPrerelease  bool      `json:"acceptPrerelease,omitempty" yaml:"acceptPrerelease,omitempty"`
+	Offset            int       `json:"offset,omitempty" yaml:"offset,omitempty"`
 }
 
 type Stack struct {
@@ -75,15 +79,22 @@ func LoadFile(f string) (*Stack, error) {
 }
 
 type ServiceStatusJob struct {
-	Service Service
-	Error   error
+	Service     Service
+	StackConfig StackSpec
+	Error       error
 }
 
 func versionCheckWorker(jobs chan *ServiceStatusJob, res chan *ServiceStatusJob) {
 	for j := range jobs {
-		stat, err := j.Service.Tracker.Tracker().GetStatus(j.Service.Version())
+		// Use service offset if specified, otherwise use global offset
+		offset := j.Service.Offset
+		if offset == 0 && j.StackConfig.Offset > 0 {
+			offset = j.StackConfig.Offset
+		}
+		
+		stat, err := j.Service.Tracker.TrackerWithConfig(j.StackConfig.AcceptPrerelease).GetStatusWithOffset(j.Service.Version(), offset)
 		if err != nil {
-			log.WithError(err).Error("error getting status")
+			log.WithError(err).WithField("service", j.Service.Name).Error("error getting status")
 			j.Error = err
 		}
 		j.Service.Status = stat
@@ -158,7 +169,8 @@ func (s *Stack) CheckVersions() error {
 			d.Tracker.URI = d.Name
 		}
 		jobs <- &ServiceStatusJob{
-			Service: d,
+			Service:     d,
+			StackConfig: s.Spec,
 		}
 	}
 	close(jobs)

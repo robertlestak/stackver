@@ -12,10 +12,13 @@ type ServiceTrackerName string
 const (
 	ServiceTrackerEndOfLife ServiceTrackerName = "endoflife"
 	ServiceTrackerGitHub    ServiceTrackerName = "github"
+	ServiceTrackerHelm      ServiceTrackerName = "helm"
+	ServiceTrackerGit       ServiceTrackerName = "git"
 )
 
 type ServiceTracker interface {
 	GetStatus(currentVersion string) (ServiceStatus, error)
+	GetStatusWithOffset(currentVersion string, offset int) (ServiceStatus, error)
 	URI() string
 	Link() string
 }
@@ -56,6 +59,13 @@ func (s *ServiceStatus) CalculateStatus(currentVersion string) {
 		s.Status = StatusCurrent
 		return
 	}
+	
+	// Check for potential downgrade first
+	if utils.IsDowngrade(currentVersion, s.LatestVersion) {
+		s.Status = StatusWarning
+		return
+	}
+	
 	// if the eol date is not zero, if the date is within 60 days, set status to warning
 	// if the date is within or under 30 days, set status to danger
 	if s.CurrentVersionEOLDate != nil && !s.CurrentVersionEOLDate.IsZero() {
@@ -96,6 +106,27 @@ func (t *ServiceTrackerMeta) Tracker() ServiceTracker {
 		return &EndOfLifeDateTracker{uri: t.URI}
 	case ServiceTrackerGitHub:
 		return &GitHubTracker{uri: t.URI}
+	case ServiceTrackerHelm:
+		return &HelmTracker{uri: t.URI}
+	case ServiceTrackerGit:
+		return &GitTracker{uri: t.URI}
+	default:
+		// default to EOL tracker
+		t.Kind = ServiceTrackerEndOfLife
+		return &EndOfLifeDateTracker{uri: t.URI}
+	}
+}
+
+func (t *ServiceTrackerMeta) TrackerWithConfig(acceptPrerelease bool) ServiceTracker {
+	switch t.Kind {
+	case ServiceTrackerEndOfLife:
+		return &EndOfLifeDateTracker{uri: t.URI}
+	case ServiceTrackerGitHub:
+		return &GitHubTracker{uri: t.URI, acceptPrerelease: acceptPrerelease}
+	case ServiceTrackerHelm:
+		return &HelmTracker{uri: t.URI, acceptPrerelease: acceptPrerelease}
+	case ServiceTrackerGit:
+		return &GitTracker{uri: t.URI, acceptPrerelease: acceptPrerelease}
 	default:
 		// default to EOL tracker
 		t.Kind = ServiceTrackerEndOfLife

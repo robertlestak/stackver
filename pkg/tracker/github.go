@@ -12,8 +12,14 @@ import (
 )
 
 type GitHubTracker struct {
-	uri         string
-	hasReleases bool
+	uri              string
+	hasReleases      bool
+	acceptPrerelease bool
+}
+
+type GitHubAPIError struct {
+	Message          string `json:"message"`
+	DocumentationURL string `json:"documentation_url"`
 }
 
 type GitHubRelease struct {
@@ -213,6 +219,16 @@ func (t *GitHubTracker) getCommitStatus(currentVersion string) (ServiceStatus, e
 		return ServiceStatus{}, err
 	}
 	defer resp.Body.Close()
+	
+	// Check for API errors first
+	if resp.StatusCode != 200 {
+		var apiError GitHubAPIError
+		if err := json.NewDecoder(resp.Body).Decode(&apiError); err == nil {
+			return ServiceStatus{}, fmt.Errorf("GitHub API error: %s", apiError.Message)
+		}
+		return ServiceStatus{}, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+	}
+	
 	var releases []GitHubCommit
 	err = json.NewDecoder(resp.Body).Decode(&releases)
 	if err != nil {
@@ -233,6 +249,10 @@ func (t *GitHubTracker) getCommitStatus(currentVersion string) (ServiceStatus, e
 }
 
 func (t *GitHubTracker) getReleaseStatus(currentVersion string) (ServiceStatus, error) {
+	return t.getReleaseStatusWithOffset(currentVersion, 0)
+}
+
+func (t *GitHubTracker) getReleaseStatusWithOffset(currentVersion string, offset int) (ServiceStatus, error) {
 	l := log.WithFields(log.Fields{
 		"tracker": "github.date",
 		"uri":     t.uri,
@@ -257,6 +277,16 @@ func (t *GitHubTracker) getReleaseStatus(currentVersion string) (ServiceStatus, 
 		return ServiceStatus{}, err
 	}
 	defer resp.Body.Close()
+	
+	// Check for API errors first
+	if resp.StatusCode != 200 {
+		var apiError GitHubAPIError
+		if err := json.NewDecoder(resp.Body).Decode(&apiError); err == nil {
+			return ServiceStatus{}, fmt.Errorf("GitHub API error: %s", apiError.Message)
+		}
+		return ServiceStatus{}, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+	}
+	
 	var releases []GitHubRelease
 	err = json.NewDecoder(resp.Body).Decode(&releases)
 	if err != nil {
@@ -266,8 +296,21 @@ func (t *GitHubTracker) getReleaseStatus(currentVersion string) (ServiceStatus, 
 	if len(releases) == 0 {
 		return ServiceStatus{}, fmt.Errorf("no releases found")
 	}
+	
+	// Extract all version strings
+	var versions []string
+	for _, release := range releases {
+		versions = append(versions, release.TagName)
+	}
+	
+	// Get version at offset
+	targetVersion := utils.GetVersionAtOffset(versions, offset, t.acceptPrerelease)
+	if targetVersion == "" {
+		return ServiceStatus{}, fmt.Errorf("no suitable version found")
+	}
+	
 	stat := ServiceStatus{
-		LatestVersion: utils.TrimVersionPrefix(releases[0].TagName),
+		LatestVersion: utils.TrimVersionPrefix(targetVersion),
 		Link:          t.Link(),
 	}
 	stat.CalculateStatus(currentVersion)
@@ -277,13 +320,17 @@ func (t *GitHubTracker) getReleaseStatus(currentVersion string) (ServiceStatus, 
 }
 
 func (t *GitHubTracker) GetStatus(currentVersion string) (ServiceStatus, error) {
+	return t.GetStatusWithOffset(currentVersion, 0)
+}
+
+func (t *GitHubTracker) GetStatusWithOffset(currentVersion string, offset int) (ServiceStatus, error) {
 	l := log.WithFields(log.Fields{
 		"tracker": "github.date",
 		"uri":     t.uri,
 	})
 	l.Debug("getting status")
 	t.hasReleases = true
-	stat, err := t.getReleaseStatus(currentVersion)
+	stat, err := t.getReleaseStatusWithOffset(currentVersion, offset)
 	if err != nil {
 		t.hasReleases = false
 		stat, err = t.getCommitStatus(currentVersion)
@@ -292,6 +339,10 @@ func (t *GitHubTracker) GetStatus(currentVersion string) (ServiceStatus, error) 
 		}
 	}
 	return stat, nil
+}
+
+func (t *GitHubTracker) SetAcceptPrerelease(accept bool) {
+	t.acceptPrerelease = accept
 }
 
 func (t *GitHubTracker) URI() string {
