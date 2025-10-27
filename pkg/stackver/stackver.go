@@ -32,7 +32,7 @@ type Service struct {
 	Sources     []Source                   `json:"sources" yaml:"sources"`
 	Tracker     tracker.ServiceTrackerMeta `json:"tracker" yaml:"tracker"`
 	Status      tracker.ServiceStatus      `json:"status" yaml:"status"`
-	Offset      int                        `json:"offset,omitempty" yaml:"offset,omitempty"`
+	Offset      *int                       `json:"offset,omitempty" yaml:"offset,omitempty"`
 
 	// Internal field populated from sources
 	version string
@@ -86,10 +86,10 @@ type ServiceStatusJob struct {
 
 func versionCheckWorker(jobs chan *ServiceStatusJob, res chan *ServiceStatusJob) {
 	for j := range jobs {
-		// Use service offset if specified, otherwise use global offset
-		offset := j.Service.Offset
-		if offset == 0 && j.StackConfig.Offset > 0 {
-			offset = j.StackConfig.Offset
+		// Use service offset if explicitly set, otherwise use global offset
+		offset := j.StackConfig.Offset
+		if j.Service.Offset != nil {
+			offset = *j.Service.Offset
 		}
 		
 		stat, err := j.Service.Tracker.TrackerWithConfig(j.StackConfig.AcceptPrerelease).GetStatusWithOffset(j.Service.Version(), offset)
