@@ -1,45 +1,37 @@
 ---
 name: 'stackver'
-description: 'Check stack versions'
+description: 'Automated dependency version management'
 inputs:
   stack:
-    description: 'Stack file/directory, relative to the repository root'
+    description: 'Stack file, relative to the repository root'
     required: true
-  output:
-    description: 'Output file/directory, relative to the repository root'
-    required: false
-  format:
-    description: 'Output format'
-    required: true
-    default: 'csv'
   daysUntilDanger:
     description: 'Days until danger'
-    required: true
+    required: false
     default: "30"
   daysUntilWarning:
     description: 'Days until warning'
-    required: true
+    required: false
     default: "60"
   stackVerVersion:
     description: 'StackVer version'
-    required: true
+    required: false
     default: "latest"
   githubToken:
-    description: 'GitHub token'
+    description: 'GitHub token for creating PRs'
+    required: true
+  dryRun:
+    description: 'Only show what would be updated'
     required: false
-  commit:
-    description: 'Commit report'
+    default: "false"
+  prTitle:
+    description: 'Pull request title'
     required: false
-    default: "true"
-  commitMessage:
-    description: 'Commit message'
+    default: "Update dependency versions"
+  prBranch:
+    description: 'Branch name for pull request'
     required: false
-    default: "Update stack versions"
-  commitBranch:
-    description: 'Commit branch'
-    required: false
-    default: "main"
-  
+    default: "stackver/update-dependencies"
 
 runs:
   using: "composite"
@@ -51,39 +43,96 @@ runs:
       echo "::error title=⛔ error hint::Support Linux Only"
       exit 1
 
-  - name: Check Stack Version
+  - name: Setup Git
+    shell: bash
+    run: |
+      git config --global user.name "stackver[bot]"
+      git config --global user.email "stackver[bot]@users.noreply.github.com"
+
+  - name: Check for Updates (Dry Run)
     shell: bash
     env:
       STACKVER_VERSION: ${{ inputs.stackVerVersion }}
-      INPUT: ${{ inputs.stack }}
-      OUTPUT: ${{ inputs.output }}
-      FORMAT: ${{ inputs.format }}
+      STACK_FILE: ${{ inputs.stack }}
       DAYS_UNTIL_DANGER: ${{ inputs.daysUntilDanger }}
       DAYS_UNTIL_WARNING: ${{ inputs.daysUntilWarning }}
       GITHUB_TOKEN: ${{ inputs.githubToken }}
     run: |
-      OUTPATH=""
-      if [[ -n "${OUTPUT}" ]]; then
-        OUTPATH="/output"
-      fi
-      docker run --rm --net=host \
-        -v ${PWD}/${INPUT}:/stack \
-        -v ${PWD}/${OUTPUT}:/output \
+      docker run --rm \
+        -v ${PWD}:/workspace \
+        -w /workspace \
         -e GITHUB_TOKEN=${GITHUB_TOKEN} \
-        -w /output \
         robertlestak/stackver:${STACKVER_VERSION} \
-        -f /stack \
-        -o ${FORMAT} \
+        -f ${STACK_FILE} \
         -d ${DAYS_UNTIL_DANGER} \
         -w ${DAYS_UNTIL_WARNING} \
-        ${OUTPATH}
+        -dry-run
 
-  - name: Push changes
-    if: ${{ inputs.githubToken != '' && inputs.commit == 'true' }}
-    uses: actions-js/push@master
-    with:
-      github_token: ${{ inputs.githubToken }}
-      message: ${{ inputs.commitMessage }}
-      branch: ${{ inputs.commitBranch }}
-  
+  - name: Apply Updates
+    if: ${{ inputs.dryRun != 'true' }}
+    shell: bash
+    env:
+      STACKVER_VERSION: ${{ inputs.stackVerVersion }}
+      STACK_FILE: ${{ inputs.stack }}
+      DAYS_UNTIL_DANGER: ${{ inputs.daysUntilDanger }}
+      DAYS_UNTIL_WARNING: ${{ inputs.daysUntilWarning }}
+      GITHUB_TOKEN: ${{ inputs.githubToken }}
+      PR_BRANCH_BASE: ${{ inputs.prBranch }}
+    run: |
+      # Generate unique branch name with timestamp
+      TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+      PR_BRANCH="${PR_BRANCH_BASE}-${TIMESTAMP}"
+      echo "PR_BRANCH=${PR_BRANCH}" >> $GITHUB_ENV
       
+      # Create and switch to update branch
+      git checkout -b ${PR_BRANCH}
+      
+      # Apply updates and capture output
+      UPDATE_OUTPUT=$(docker run --rm \
+        -v ${PWD}:/workspace \
+        -w /workspace \
+        -e GITHUB_TOKEN=${GITHUB_TOKEN} \
+        robertlestak/stackver:${STACKVER_VERSION} \
+        -f ${STACK_FILE} \
+        -d ${DAYS_UNTIL_DANGER} \
+        -w ${DAYS_UNTIL_WARNING} \
+        -update 2>&1)
+      
+      echo "$UPDATE_OUTPUT"
+      
+      # Check if there are changes
+      if git diff --quiet; then
+        echo "No updates needed"
+        exit 0
+      fi
+      
+      # Extract updated dependency names from output
+      UPDATED_DEPS=$(echo "$UPDATE_OUTPUT" | grep "Successfully updated" | sed 's/.*Successfully updated \([^:]*\):.*/\1/' | sort -u | tr '\n' ',' | sed 's/,$//')
+      echo "UPDATED_DEPS=${UPDATED_DEPS}" >> $GITHUB_ENV
+      
+      # Commit changes
+      git add .
+      git commit -m "Update dependency versions via stackver: ${UPDATED_DEPS}"
+      git push origin ${PR_BRANCH}
+
+  - name: Create Pull Request
+    if: ${{ inputs.dryRun != 'true' }}
+    shell: bash
+    env:
+      GITHUB_TOKEN: ${{ inputs.githubToken }}
+      PR_TITLE_BASE: ${{ inputs.prTitle }}
+    run: |
+      # Generate PR title with updated dependencies
+      if [ -n "$UPDATED_DEPS" ]; then
+        PR_TITLE="${PR_TITLE_BASE}: ${UPDATED_DEPS}"
+      else
+        TIMESTAMP=$(date +%Y-%m-%d)
+        PR_TITLE="${PR_TITLE_BASE} (${TIMESTAMP})"
+      fi
+      
+      # Create PR
+      gh pr create \
+        --title "${PR_TITLE}" \
+        --body "Automated dependency version updates by stackver. Updated dependencies: ${UPDATED_DEPS:-none}" \
+        --head ${PR_BRANCH} \
+        --base main

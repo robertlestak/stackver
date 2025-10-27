@@ -1,0 +1,19 @@
+---
+metadata:
+  name: kubernetes-example
+spec:
+  dependencies:
+  - name: nginx
+    sources:
+    - file: deployment.yaml
+      selector: $.spec.template.spec.containers[0].image
+    tracker:
+      kind: endoflife
+      uri: nginx
+  - name: redis
+    sources:
+    - file: deployment.yaml
+      selector: $.spec.template.spec.containers[1].image
+    tracker:
+      kind: endoflife
+      uri: redis

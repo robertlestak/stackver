@@ -1,0 +1,16 @@
+---
+metadata:
+  name: helm-example
+spec:
+  dependencies:
+  - name: cert-manager
+    sources:
+    - file: values.yaml
+      selector: $.image.tag
+    - file: values.yaml
+      selector: $.webhook.image.tag
+    - file: values.yaml
+      selector: $.cainjector.image.tag
+    tracker:
+      kind: github
+      uri: cert-manager/cert-manager

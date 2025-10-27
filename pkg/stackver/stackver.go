@@ -1,25 +1,18 @@
 package stackver
 
 import (
-	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/robertlestak/stackver/pkg/extractor"
+	"github.com/robertlestak/stackver/pkg/selector"
 	"github.com/robertlestak/stackver/pkg/tracker"
 	"github.com/rodaine/table"
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
-)
-
-const (
-	FormatJSON       = "json"
-	FormatYAML       = "yaml"
-	FormatText       = "text"
-	FormatCSV        = "csv"
-	FormatPrometheus = "prometheus"
 )
 
 type ObjectMeta struct {
@@ -28,12 +21,20 @@ type ObjectMeta struct {
 	Annotations map[string]string `json:"annotations,omitempty" yaml:"annotations,omitempty"`
 }
 
+type Source struct {
+	File     string `json:"file" yaml:"file"`
+	Selector string `json:"selector" yaml:"selector"`
+}
+
 type Service struct {
 	Name        string                     `json:"name" yaml:"name"`
 	Description string                     `json:"description,omitempty" yaml:"description,omitempty"`
-	Version     string                     `json:"version" yaml:"version"`
+	Sources     []Source                   `json:"sources" yaml:"sources"`
 	Tracker     tracker.ServiceTrackerMeta `json:"tracker" yaml:"tracker"`
 	Status      tracker.ServiceStatus      `json:"status" yaml:"status"`
+
+	// Internal field populated from sources
+	version string
 }
 
 type StackSpec struct {
@@ -80,7 +81,7 @@ type ServiceStatusJob struct {
 
 func versionCheckWorker(jobs chan *ServiceStatusJob, res chan *ServiceStatusJob) {
 	for j := range jobs {
-		stat, err := j.Service.Tracker.Tracker().GetStatus(j.Service.Version)
+		stat, err := j.Service.Tracker.Tracker().GetStatus(j.Service.Version())
 		if err != nil {
 			log.WithError(err).Error("error getting status")
 			j.Error = err
@@ -88,6 +89,46 @@ func versionCheckWorker(jobs chan *ServiceStatusJob, res chan *ServiceStatusJob)
 		j.Service.Status = stat
 		res <- j
 	}
+}
+
+// Version returns the current version read from sources
+func (s *Service) Version() string {
+	return s.version
+}
+
+// ReadVersionFromSources reads the current version from file sources
+func (s *Service) ReadVersionFromSources() error {
+	l := log.WithFields(log.Fields{
+		"service": s.Name,
+	})
+
+	if len(s.Sources) == 0 {
+		return errors.New("sources must be defined")
+	}
+
+	// Read from first available source
+	for _, source := range s.Sources {
+		l = l.WithFields(log.Fields{
+			"file":     source.File,
+			"selector": source.Selector,
+		})
+		l.Debug("reading version from source")
+
+		value, err := selector.ReadValue(source.File, source.Selector)
+		if err != nil {
+			l.WithError(err).Warn("failed to read from source, trying next")
+			continue
+		}
+
+		version := extractor.ExtractVersion(value)
+		if version != "" {
+			s.version = version
+			l.Debugf("extracted version: %s", version)
+			return nil
+		}
+	}
+
+	return errors.New("could not read version from any source")
 }
 
 func (s *Stack) CheckVersions() error {
@@ -102,8 +143,17 @@ func (s *Stack) CheckVersions() error {
 		go versionCheckWorker(jobs, res)
 	}
 	var origNameOrder []string
-	for _, d := range s.Spec.Dependencies {
+	for i, d := range s.Spec.Dependencies {
 		origNameOrder = append(origNameOrder, d.Name)
+
+		// Read version from sources if needed
+		if err := d.ReadVersionFromSources(); err != nil {
+			return fmt.Errorf("failed to read version for %s: %w", d.Name, err)
+		}
+
+		// Update the dependency in the slice with the read version
+		s.Spec.Dependencies[i] = d
+
 		if d.Tracker.URI == "" {
 			d.Tracker.URI = d.Name
 		}
@@ -133,126 +183,10 @@ func (s *Stack) CheckVersions() error {
 	return nil
 }
 
-func (s *Stack) Output(format string, file string) error {
-	l := log.WithFields(log.Fields{
-		"app": "stackver",
-	})
-	l.Debug("outputting")
-	var err error
-	var f *os.File
-	if file == "" || file == "-" {
-		f = os.Stdout
-	} else {
-		f, err = os.Create(file)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-	}
-	switch format {
-	case FormatJSON:
-		// make it pretty
-		enc := json.NewEncoder(f)
-		enc.SetIndent("", "  ")
-		err = enc.Encode(s)
-	case FormatYAML:
-		// add a doc separator
-		f.WriteString("---\n")
-		err = yaml.NewEncoder(f).Encode(s)
-	case FormatText:
-		err = s.outputText(f)
-	case FormatPrometheus:
-		err = s.outputPrometheus(f)
-	case FormatCSV:
-		err = s.outputCSV(f)
-	default:
-		err = errors.New("invalid format")
-	}
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *Stack) outputText(f *os.File) error {
-	tbl := table.New("Name", "Version", "Latest", "EOL Date", "Status", "Link").WithWriter(f)
+func (s *Stack) PrintStatus() {
+	tbl := table.New("Name", "Version", "Latest", "Status")
 	for _, d := range s.Spec.Dependencies {
-		var eolDate string
-		if d.Status.CurrentVersionEOLDate != nil && !d.Status.CurrentVersionEOLDate.IsZero() {
-			eolDate = d.Status.CurrentVersionEOLDate.Format("2006-01-02")
-		} else {
-			eolDate = "unknown"
-		}
-		tbl.AddRow(d.Name, d.Version, d.Status.LatestVersion, eolDate, d.Status.Status, d.Status.Link)
+		tbl.AddRow(d.Name, d.Version(), d.Status.LatestVersion, d.Status.Status)
 	}
 	tbl.Print()
-	return nil
-}
-
-func (s *Stack) outputCSV(f *os.File) error {
-	writer := csv.NewWriter(f)
-	defer writer.Flush()
-
-	header := []string{"Name", "Version", "Latest", "EOL Date", "Status", "Link"}
-	if err := writer.Write(header); err != nil {
-		return err
-	}
-
-	for _, d := range s.Spec.Dependencies {
-		var eolDate string
-		if d.Status.CurrentVersionEOLDate != nil && !d.Status.CurrentVersionEOLDate.IsZero() {
-			eolDate = d.Status.CurrentVersionEOLDate.Format("2006-01-02")
-		} else {
-			eolDate = "unknown"
-		}
-
-		row := []string{d.Name, d.Version, d.Status.LatestVersion, eolDate, string(d.Status.Status), d.Status.Link}
-
-		if err := writer.Write(row); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *Stack) outputPrometheus(f *os.File) error {
-	serviceStatusGauges := prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "stackver_service_status",
-		Help: "Stackver service status",
-	}, []string{"name", "version", "latest", "eol_date", "status", "link"})
-	for _, d := range s.Spec.Dependencies {
-		var eolDate string
-		if !d.Status.CurrentVersionEOLDate.IsZero() {
-			eolDate = d.Status.CurrentVersionEOLDate.Format("2006-01-02")
-		} else {
-			eolDate = "unknown"
-		}
-		fv := float64(tracker.StatusCodeMap[d.Status.Status])
-		serviceStatusGauges.WithLabelValues(d.Name, d.Version, d.Status.LatestVersion, eolDate, string(d.Status.Status), d.Status.Link).Set(fv)
-	}
-	prometheus.MustRegister(serviceStatusGauges)
-	// if f is stdout, write to a temp file, print, and delete
-	if f == os.Stdout {
-		nf, err := os.CreateTemp("", "stackver.*.prom")
-		if err != nil {
-			return err
-		}
-		defer os.Remove(nf.Name())
-		err = prometheus.WriteToTextfile(nf.Name(), prometheus.DefaultGatherer)
-		if err != nil {
-			return err
-		}
-		// read the file and print it
-		fd, err := os.ReadFile(nf.Name())
-		if err != nil {
-			return err
-		}
-		_, err = f.Write(fd)
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-	prometheus.WriteToTextfile(f.Name(), prometheus.DefaultGatherer)
-	return nil
 }

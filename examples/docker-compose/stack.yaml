@@ -1,0 +1,33 @@
+---
+metadata:
+  name: docker-compose-example
+spec:
+  dependencies:
+  - name: nginx
+    sources:
+    - file: docker-compose.yml
+      selector: $.services.web.image
+    tracker:
+      kind: endoflife
+      uri: nginx
+  - name: postgresql
+    sources:
+    - file: docker-compose.yml
+      selector: $.services.db.image
+    tracker:
+      kind: endoflife
+      uri: postgresql
+  - name: redis
+    sources:
+    - file: docker-compose.yml
+      selector: $.services.cache.image
+    tracker:
+      kind: endoflife
+      uri: redis
+  - name: nodejs
+    sources:
+    - file: docker-compose.yml
+      selector: $.services.app.image
+    tracker:
+      kind: endoflife
+      uri: nodejs

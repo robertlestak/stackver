@@ -1,32 +1,58 @@
 # stackver
 
-`stackver` is a tool to help track the versions of your stack dependencies. As systems become more microservice oriented, it is critical to stay on top of your version dependencies to ensure you are not running into any security vulnerabilities or functional regressions. While a CMDB is good at tracking the _historic_ versions of your stack, it is often difficult to relate these to their _current_ upstream versions.
+`stackver` is a dependabot-like tool that automatically tracks and updates versions of your stack dependencies. It can read versions directly from your deployment files (Kubernetes YAML, Helm charts, docker-compose, etc.), check for updates, and surgically update only the version numbers while preserving all formatting and comments.
 
-`stackver` is a tool to help you do just that. It will take a list of your stack dependencies and utilize predefined upstream `trackers` to find any new releases. It will then compare these new releases to your current stack and output a report of any new releases, as well as notify you of if/when your current versions go EOL. This gives your technical teams visibility to and lead time on any upcoming changes to your stack, so they can be adequately integration tested in test environments before being deployed to production.
+As systems become more microservice oriented, it is critical to stay on top of your version dependencies to ensure you are not running into any security vulnerabilities or functional regressions. `stackver` automates this process by reading versions from your actual deployment files and updating them when new releases are available.
 
 - [stackver](#stackver)
+  - [Quick Start](#quick-start)
   - [Example Manifest](#example-manifest)
     - [Manifest Metadata](#manifest-metadata)
     - [Manifest Spec](#manifest-spec)
-      - [Depdenency](#depdenency)
+      - [Dependency](#dependency)
+      - [Sources](#sources)
   - [Trackers](#trackers)
     - [endoflife](#endoflife)
     - [github](#github)
-  - [Outputs](#outputs)
-    - [text](#text)
-    - [csv](#csv)
-    - [yaml](#yaml)
-    - [json](#json)
-    - [prometheus](#prometheus)
   - [Usage](#usage)
+    - [Status Mode (Default)](#status-mode-default)
+    - [Update Mode](#update-mode)
     - [Docker Usage](#docker-usage)
   - [Automated Usage](#automated-usage)
     - [GitHub Action](#github-action)
       - [Inputs](#inputs)
 
+## Quick Start
+
+1. **Create a stack manifest** pointing to your deployment files:
+```yaml
+---
+metadata:
+  name: my-stack
+spec:
+  dependencies:
+  - name: nginx
+    sources:
+    - file: k8s/deployment.yaml
+      selector: $.spec.template.spec.containers[0].image
+    tracker:
+      kind: endoflife
+      uri: nginx
+```
+
+2. **Check for updates**:
+```bash
+stackver -f stack.yaml -dry-run
+```
+
+3. **Apply updates**:
+```bash
+stackver -f stack.yaml -update
+```
+
 ## Example Manifest
 
-`stackver` is configured with a YAML (or JSON) manifest. This manifest should contain all of the dependencies in this stack, and their current versions. For example:
+`stackver` reads versions directly from your deployment files using JSONPath selectors:
 
 ```yaml
 ---
@@ -34,20 +60,22 @@ metadata:
   name: stack
 spec:
   dependencies:
-  - name: kubernetes
-    version: 1.27.3
-  - name: istio
-    version: 1.19.3
+  - name: nginx
+    sources:
+    - file: k8s/deployment.yaml
+      selector: $.spec.template.spec.containers[0].image
+    - file: docker-compose.yml
+      selector: $.services.web.image
+    tracker:
+      kind: endoflife
+      uri: nginx
   - name: cert-manager
-    version: 1.13.1
+    sources:
+    - file: helm/cert-manager/values.yaml
+      selector: $.image.tag
     tracker:
       kind: github
       uri: cert-manager/cert-manager
-  - name: cert-manager-sync
-    version: a22c122
-    tracker:
-      kind: github
-      uri: robertlestak/cert-manager-sync
 ```
 
 ### Manifest Metadata
@@ -58,13 +86,34 @@ This contains the metadata for the manifest itself. Currently, the only required
 
 This contains the actual dependencies in your stack under the `dependencies` key. Each dependency should be defined by its `name` and `version`. The `name` is used to identify the dependency in the output, and the `version` is the current version of the dependency in your stack. This is the version that will be compared against the latest upstream version.
 
-#### Depdenency
+#### Dependency
 
-The `version` field is required and should be the current version of the dependency in your stack. This is the version that will be compared against the latest upstream version.
+Each dependency requires:
 
-The `tracker` field is optional and should be used to define the upstream tracker for this dependency. If no tracker is defined, `stackver` will use the `endoflife` tracker by default. See the [Trackers](#trackers) section for more information.
+- `sources`: Array of file paths and selectors to read versions from
+  - `file`: Path to YAML/JSON file containing the version
+  - `selector`: JSONPath selector to extract the version (e.g., `$.spec.template.spec.containers[0].image`)
 
-If no `tracker.uri` is provided, the dependency key name is used.
+The `tracker` field is optional and defines the upstream tracker for this dependency. If no tracker is defined, `stackver` will use the `endoflife` tracker by default.
+
+If no `tracker.uri` is provided, the dependency name is used.
+
+#### Sources
+
+Sources allow `stackver` to read versions directly from your deployment files:
+
+```yaml
+sources:
+- file: k8s/deployment.yaml
+  selector: $.spec.template.spec.containers[0].image
+- file: helm/values.yaml
+  selector: $.image.tag
+```
+
+Supported selector formats:
+- JSONPath: `$.spec.containers[0].image`
+- Nested keys: `$.image.tag`
+- Array indexing: `$.containers[0].name`
 
 ## Trackers
 
@@ -84,114 +133,6 @@ Since `github` will only return the release itself and not meta information such
 
 *Note*: The GitHub API uses aggressive rate limits, so you'll probably want to set the `GITHUB_TOKEN` environment variable to a [personal access token](https://docs.github.com/en/github/authenticating-to-github/creating-a-personal-access-token). This will increase your rate limit from 60 requests per hour to 5000 requests per hour.
 
-## Outputs
-
-When run, `stackver` evaulates the provided stack manifest and outputs a report of the current status of each dependency. The following output formats are currently supported:
-
-### text
-
-The `text` output format is the default output format. It will output a simple text report of the current status of each dependency. For example:
-
-```text
-Name               Version  Latest   EOL Date    Status   Link
-kubernetes         1.27.3   1.28.3   2024-06-28  good     https://endoflife.date/kubernetes
-istio              1.19.3   1.19.3   2024-03-31  current  https://endoflife.date/istio
-cert-manager       1.13.1   1.13.2   unknown     good     https://github.com/cert-manager/cert-manager/releases
-cert-manager-sync  a22c122  a22c122  unknown     current  https://github.com/robertlestak/cert-manager-sync
-```
-
-### csv
-
-The `csv` output format will output a simple CSV report of the current status of each dependency. For example:
-
-```csv
-Name,Version,Latest,EOL Date,Status,Link
-kubernetes,1.27.3,1.28.3,2024-06-28,good,https://endoflife.date/kubernetes
-istio,1.19.3,1.19.3,2024-03-31,current,https://endoflife.date/istio
-cert-manager,1.13.1,1.13.2,unknown,good
-cert-manager-sync,a22c122,a22c122,unknown,current
-```
-
-This is useful for importing into other tools such as spreadsheets. GitHub UI also supports rendering CSV files, so you can simply commit the CSV reports to your repository and view them in the GitHub UI.
-
-### yaml
-
-The `yaml` output format will output a more detailed YAML report of the current status of each dependency. For example:
-
-```yaml
----
-metadata:
-    name: stack
-spec:
-    dependencies:
-      - name: kubernetes
-        version: 1.27.3
-        tracker:
-            kind: endoflife
-            uri: kubernetes
-        status:
-            latestVersion: 1.28.3
-            currentVersionEOLDate: 2024-06-28T00:00:00Z
-            link: https://endoflife.date/kubernetes
-            status: good
-      - name: istio
-        version: 1.19.3
-        tracker:
-            kind: endoflife
-            uri: istio
-        status:
-            latestVersion: 1.19.3
-            currentVersionEOLDate: 2024-03-31T00:00:00Z
-            link: https://endoflife.date/istio
-            status: current
-      - name: cert-manager
-        version: 1.13.1
-        tracker:
-            kind: github
-            uri: cert-manager/cert-manager
-        status:
-            latestVersion: 1.13.2
-            link: https://github.com/cert-manager/cert-manager/releases
-            status: good
-      - name: cert-manager-sync
-        version: a22c122
-        tracker:
-            kind: github
-            uri: robertlestak/cert-manager-sync
-        status:
-            latestVersion: a22c122
-            link: https://github.com/robertlestak/cert-manager-sync
-            status: current
-```
-
-### json
-
-The `json` output format will output a more detailed JSON report of the current status of each dependency, similar to YAML.
-
-### prometheus
-
-The `prometheus` output format will output a Prometheus Gauge metric which can be used to track the status of your stack dependencies over time. 
-
-Status strings are converted to integers as follows (tl;dr lower is better):
-
-- `current` = `0`
-- `good` = `1`
-- `update-available` = `2`
-- `warning` = `3`
-- `danger` = `4`
-- `critical` = `5`
-
-For example:
-
-```text
-# HELP stackver_service_status Stackver service status
-# TYPE stackver_service_status gauge
-stackver_service_status{eol_date="2024-03-31",latest="1.19.3",link="https://endoflife.date/istio",name="istio",status="current",version="1.19.3"} 0
-stackver_service_status{eol_date="2024-06-28",latest="1.28.3",link="https://endoflife.date/kubernetes",name="kubernetes",status="good",version="1.27.3"} 1
-stackver_service_status{eol_date="unknown",latest="1.13.2",link="https://github.com/cert-manager/cert-manager/releases",name="cert-manager",status="good",version="1.13.1"} 1
-stackver_service_status{eol_date="unknown",latest="a22c122",link="https://github.com/robertlestak/cert-manager-sync",name="cert-manager-sync",status="current",version="a22c122"} 0
-```
-
 ## Usage
 
 ```bash
@@ -200,24 +141,36 @@ Usage of stackver:
         days until danger (default 30)
   -f string
         stack file
-  -o string
-        output format (default "text")
+  -update
+        update files with new versions
+  -dry-run
+        show what would be updated without making changes
   -v    print version
   -w int
         days until warning (default 60)
 ```
 
-`stackver` writes its output to `stdout`, so you can pipe it to a file or another program. For example:
+### Status Mode (Default)
+
+Show current status of dependencies:
 
 ```bash
-$ stackver -f stack.yaml -o yaml > stack.yaml
+stackver -f stack.yaml
 ```
 
-If `-f` is a directory, `stackver` will search for all `.yaml` and `.json` files and evaluate them all. When in directory mode, if an argument is passed, it will be used as the output directory. For example:
+### Update Mode
+
+Dependabot-like functionality that can update your deployment files:
 
 ```bash
-$ stackver -f stack -o yaml stack-reports
+# Preview what would be updated (dry-run)
+stackver -f stack.yaml -dry-run
+
+# Apply updates to files
+stackver -f stack.yaml -update
 ```
+
+stackver will surgically update ONLY the version numbers while preserving all formatting, comments, and whitespace in your files.
 
 ### Docker Usage
 
@@ -231,64 +184,64 @@ The default working directory is `/stack`, so if you mount your stack manifests 
 
 ## Automated Usage
 
-`stackver` is designed to be run as part of an automated pipeline to periodicially check your dependencies and alert you of any upcoming EOL dates / new releases. `stackver` itself is solely responsible for generating the reports, and expects you to rely on pre-existing workflow and alerting systems. 
+`stackver` is designed to be run as part of an automated pipeline to periodically check your dependencies and update your deployment files automatically, similar to dependabot.
 
-For example, you could run it as a GitHub Action on a schedule to track the versions of your stack dependencies over time and commit the reports to your repository. This would allow you to track the versions of your stack dependencies over time, as well as provide a historical record of the status of your stack. 
+For example, you could run it as a GitHub Action on a schedule to:
+1. Check versions in your deployment files
+2. Update them with new releases  
+3. Create pull requests with the changes
 
-You could also use the `prometheus` output format and `node_exporter` to track the status of your stack dependencies over time in a Prometheus/Grafana dashboard, and alert you with Grafana's native alerting system.
+The tool focuses on doing the work rather than generating reports - it either shows current status or updates your files.
 
 ### GitHub Action
 
-`stackver` is published as a GitHub Action which you can use in your existing workflows. For example:
+`stackver` is published as a GitHub Action which you can use to automatically update dependencies and create pull requests. For example:
 
 ```yaml
-name: stackver
+name: Update Dependencies
 on:
-  # check on every push to main branch
-  push:
-    branches:
-      - main
-    # only check stack manifest changes
-    paths:
-      - 'stack-manifests/**'
-
-  # check every day at midnight
+  # Check daily at 9 AM
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 9 * * *'
+  
+  # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
-  stackver:
-    # this must be run on a linux machine
+  update-dependencies:
     runs-on: ubuntu-latest
-    # let stackver access the repository
     permissions:
       contents: write
+      pull-requests: write
     steps:
-    # checkout manifests
     - uses: actions/checkout@v4
-    # run stackver and commit the reports to the repository
-    - uses: robertlestak/stackver@main
+    
+    - name: Update Dependencies
+      uses: robertlestak/stackver@main
       with:
-        stack: stack-manifests
-        output: reports/stack-manifests
+        stack: stack.yaml
         githubToken: ${{ secrets.GITHUB_TOKEN }}
+        prTitle: "🔄 Update dependency versions"
+        prBranch: "stackver/updates"
 ```
 
-This will run `stackver` on a schedule and commit the reports to the `reports/stack-manifests` directory in your repository. You can then use this to track the versions of your stack dependencies over time, as well as provide a historical record of the status of your stack.
-
-Note that you must checkout your repository before running `stackver` so it can access your stack manifests. You must also provide a `githubToken` so `stackver` can access the GitHub API if you want to use the `github` tracker and/or push the reports back to your repository.
+This will:
+1. Check your stack manifest for version updates
+2. Apply updates to your deployment files
+3. Create a pull request with descriptive title including updated dependencies
+4. Example PR titles: 
+   - `🔄 Update dependency versions: nginx, redis`
+   - `🔄 Update dependency versions: kubernetes`
 
 #### Inputs
 
 | Name | Description | Required | Default |
 | --- | --- | --- | --- |
-| `stack` | The path to your stack manifests. This can be a single file or a directory. If a directory is provided, `stackver` will search for all `.yaml` and `.json` files and evaluate them all. | `true` | N/A |
-| `output` | The path to write the reports to. If a directory is provided, `stackver` will write the reports to the provided directory with the same name as the manifest. If a file is provided, `stackver` will write the reports to the provided file. | `false` | `stdout` |
-| `githubToken` | A GitHub personal access token to use to access the GitHub API. This is required if you want to use the `github` tracker and/or push the reports back to your repository. | `false` | N/A |
-| `daysUntilWarning` | The number of days until a warning should be generated. | `false` | `60` |
-| `daysUntilDanger` | The number of days until a danger should be generated. | `false` | `30` |
-| `format` | The output format to use. | `false` | `csv` |
-| `stackVerVersion` | The version of `stackver` to use. | `false` | `latest` |
-| `commit` | Whether or not to commit the reports back to the repository. | `false` | `true` |
-| `commitMessage` | The commit message to use. | `false` | `Update stack versions` |
-| `commitBranch` | The branch to commit the reports to. | `false` | `main` |
+| `stack` | Path to your stack manifest file | `true` | N/A |
+| `githubToken` | GitHub token for creating PRs | `true` | N/A |
+| `dryRun` | Only show what would be updated | `false` | `false` |
+| `prTitle` | Pull request title | `false` | `Update dependency versions` |
+| `prBranch` | Branch name for pull request | `false` | `stackver/update-dependencies` |
+| `daysUntilWarning` | Days until warning status | `false` | `60` |
+| `daysUntilDanger` | Days until danger status | `false` | `30` |
+| `stackVerVersion` | Version of stackver to use | `false` | `latest` |

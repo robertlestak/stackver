@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  web:
+    image: nginx:1.21.0
+    ports:
+      - "80:80"
+    volumes:
+      - ./html:/usr/share/nginx/html
+    depends_on:
+      - db
+      - cache
+
+  db:
+    image: postgres:13.8
+    environment:
+      POSTGRES_DB: myapp
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  cache:
+    image: redis:6.2.0
+    ports:
+      - "6379:6379"
+
+  app:
+    image: node:18.17.0
+    working_dir: /app
+    volumes:
+      - ./app:/app
+    command: npm start
+    depends_on:
+      - db
+      - cache
+
+volumes:
+  postgres_data:

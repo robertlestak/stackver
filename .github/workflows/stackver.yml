@@ -1,0 +1,27 @@
+name: Update Dependencies
+
+on:
+  # Check daily at 9 AM UTC
+  schedule:
+    - cron: '0 9 * * *'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  update-dependencies:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Update Dependencies
+      uses: ./
+      with:
+        stack: stack.yaml
+        githubToken: ${{ secrets.GITHUB_TOKEN }}
+        prTitle: "🔄 Update dependency versions"
+        prBranch: "stackver/updates"
