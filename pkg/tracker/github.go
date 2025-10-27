@@ -116,6 +116,17 @@ func (t *GitHubTracker) Link() string {
 	}
 }
 
+type GitHubTag struct {
+	Name       string `json:"name"`
+	ZipballURL string `json:"zipball_url"`
+	TarballURL string `json:"tarball_url"`
+	Commit     struct {
+		Sha string `json:"sha"`
+		URL string `json:"url"`
+	} `json:"commit"`
+	NodeID string `json:"node_id"`
+}
+
 type GitHubCommit struct {
 	Sha    string `json:"sha"`
 	NodeID string `json:"node_id"`
@@ -192,6 +203,74 @@ type GitHubCommit struct {
 		URL     string `json:"url"`
 		HTMLURL string `json:"html_url"`
 	} `json:"parents"`
+}
+
+func (t *GitHubTracker) getTagStatus(currentVersion string) (ServiceStatus, error) {
+	return t.getTagStatusWithOffset(currentVersion, 0)
+}
+
+func (t *GitHubTracker) getTagStatusWithOffset(currentVersion string, offset int) (ServiceStatus, error) {
+	l := log.WithFields(log.Fields{
+		"tracker": "github.tags",
+		"uri":     t.uri,
+	})
+	l.Debug("getting status")
+	endpoint := fmt.Sprintf("https://api.github.com/repos/%s/tags", t.URI())
+	l = l.WithField("endpoint", endpoint)
+	l.Debug("getting endpoint")
+	c := &http.Client{}
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		l.WithError(err).Error("error creating request")
+		return ServiceStatus{}, err
+	}
+	req.Header.Add("Accept", "application/vnd.github.v3+json")
+	if os.Getenv("GITHUB_TOKEN") != "" {
+		req.Header.Add("Authorization", fmt.Sprintf("token %s", os.Getenv("GITHUB_TOKEN")))
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		l.WithError(err).Error("error getting endpoint")
+		return ServiceStatus{}, err
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != 200 {
+		var apiError GitHubAPIError
+		if err := json.NewDecoder(resp.Body).Decode(&apiError); err == nil {
+			return ServiceStatus{}, fmt.Errorf("GitHub API error: %s", apiError.Message)
+		}
+		return ServiceStatus{}, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+	}
+	
+	var tags []GitHubTag
+	err = json.NewDecoder(resp.Body).Decode(&tags)
+	if err != nil {
+		l.WithError(err).Error("error decoding response")
+		return ServiceStatus{}, err
+	}
+	if len(tags) == 0 {
+		return ServiceStatus{}, fmt.Errorf("no tags found")
+	}
+	
+	var versions []string
+	for _, tag := range tags {
+		versions = append(versions, tag.Name)
+	}
+	
+	targetVersion := utils.GetVersionAtOffset(versions, offset, t.acceptPrerelease)
+	if targetVersion == "" {
+		return ServiceStatus{}, fmt.Errorf("no suitable version found")
+	}
+	
+	stat := ServiceStatus{
+		LatestVersion: utils.TrimVersionPrefix(targetVersion),
+		Link:          t.Link(),
+	}
+	stat.CalculateStatus(currentVersion)
+	l = l.WithField("stat", stat)
+	l.Debug("got status")
+	return stat, nil
 }
 
 func (t *GitHubTracker) getCommitStatus(currentVersion string) (ServiceStatus, error) {
@@ -332,10 +411,15 @@ func (t *GitHubTracker) GetStatusWithOffset(currentVersion string, offset int) (
 	t.hasReleases = true
 	stat, err := t.getReleaseStatusWithOffset(currentVersion, offset)
 	if err != nil {
-		t.hasReleases = false
-		stat, err = t.getCommitStatus(currentVersion)
+		l.Debug("no releases found, trying tags")
+		stat, err = t.getTagStatusWithOffset(currentVersion, offset)
 		if err != nil {
-			return ServiceStatus{}, err
+			l.Debug("no tags found, falling back to commits")
+			t.hasReleases = false
+			stat, err = t.getCommitStatus(currentVersion)
+			if err != nil {
+				return ServiceStatus{}, err
+			}
 		}
 	}
 	return stat, nil

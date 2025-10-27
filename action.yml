@@ -31,7 +31,7 @@ inputs:
   prBranch:
     description: 'Branch name for pull request'
     required: false
-    default: "stackver/update-dependencies"
+    default: "stackver/dependency-updates"
   baseBranch:
     description: 'Base branch to create PR against (defaults to repository default branch)'
     required: false
@@ -52,12 +52,16 @@ runs:
         git config --global user.name "stackver[bot]"
         git config --global user.email "stackver[bot]@users.noreply.github.com"
         
-        # Install GitHub CLI if not present
+        # Install GitHub CLI and jq if not present
         if ! command -v gh &> /dev/null; then
           curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
           echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
           sudo apt update
-          sudo apt install gh -y
+          sudo apt install gh jq -y
+        fi
+        
+        if ! command -v jq &> /dev/null; then
+          sudo apt update && sudo apt install jq -y
         fi
 
     - name: Check for Updates (Dry Run)
@@ -81,7 +85,7 @@ runs:
           -dry-run
         echo "::endgroup::"
 
-    - name: Apply Updates
+    - name: Check for Existing PR and Apply Updates
       if: ${{ inputs.dryRun != 'true' }}
       shell: bash
       env:
@@ -90,10 +94,10 @@ runs:
         DAYS_UNTIL_DANGER: ${{ inputs.daysUntilDanger }}
         DAYS_UNTIL_WARNING: ${{ inputs.daysUntilWarning }}
         GITHUB_TOKEN: ${{ inputs.githubToken }}
-        PR_BRANCH_BASE: ${{ inputs.prBranch }}
+        PR_BRANCH: ${{ inputs.prBranch }}
         BASE_BRANCH: ${{ inputs.baseBranch }}
       run: |
-        echo "::group::Applying dependency updates"
+        echo "::group::Checking for existing PR and applying updates"
         
         # Use provided base branch or detect default branch
         if [ -n "$BASE_BRANCH" ]; then
@@ -103,16 +107,29 @@ runs:
         fi
         echo "DEFAULT_BRANCH=${DEFAULT_BRANCH}" >> $GITHUB_ENV
         
-        # Generate unique branch name with timestamp
-        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-        PR_BRANCH="${PR_BRANCH_BASE}-${TIMESTAMP}"
-        echo "PR_BRANCH=${PR_BRANCH}" >> $GITHUB_ENV
+        # Check if PR branch exists
+        if git ls-remote --heads origin ${PR_BRANCH} | grep -q ${PR_BRANCH}; then
+          echo "::notice::Found existing branch ${PR_BRANCH}, updating it"
+          git fetch origin ${PR_BRANCH}
+          git checkout ${PR_BRANCH}
+          
+          # Try to rebase, but don't fail if there are conflicts
+          if ! git rebase origin/${DEFAULT_BRANCH}; then
+            echo "::warning::Rebase failed, using existing branch as-is"
+            git rebase --abort
+          fi
+          
+          EXISTING_PR=$(gh pr list --head ${PR_BRANCH} --state open --json number | jq -r '.[0].number // empty')
+          if [ -n "$EXISTING_PR" ]; then
+            echo "EXISTING_PR_NUMBER=${EXISTING_PR}" >> $GITHUB_ENV
+          fi
+        else
+          echo "::notice::Creating new branch ${PR_BRANCH}"
+          git checkout -b ${PR_BRANCH}
+        fi
         
-        # Create and switch to update branch
-        git checkout -b ${PR_BRANCH}
-        
-        # Apply updates and capture output
-        set +e  # Don't exit on error to capture output
+        # Apply updates
+        set +e
         UPDATE_OUTPUT=$(docker run --rm \
           -v ${PWD}:/stack \
           -w /stack \
@@ -141,52 +158,53 @@ runs:
         
         echo "HAS_UPDATES=true" >> $GITHUB_ENV
         
-        # Extract updated dependency names from output
+        # Extract updated dependencies
         UPDATED_DEPS=$(echo "$UPDATE_OUTPUT" | grep -E "(Successfully updated|Would update)" | sed -E 's/.*(Successfully updated|Would update) ([^:]+):.*/\2/' | sort -u | tr '\n' ',' | sed 's/,$//')
         echo "UPDATED_DEPS=${UPDATED_DEPS}" >> $GITHUB_ENV
         
-        # Commit changes
+        # Commit and push changes
         git add .
-        git commit -m "Update dependency versions via stackver: ${UPDATED_DEPS}"
-        git push origin ${PR_BRANCH}
+        git commit -m "Update dependency versions: ${UPDATED_DEPS}" || git commit --amend -m "Update dependency versions: ${UPDATED_DEPS}"
+        git push origin ${PR_BRANCH} --force-with-lease
         
         echo "::endgroup::"
 
-    - name: Create Pull Request
+    - name: Create or Update Pull Request
       if: ${{ inputs.dryRun != 'true' && env.HAS_UPDATES == 'true' }}
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.githubToken }}
         PR_TITLE_BASE: ${{ inputs.prTitle }}
+        PR_BRANCH: ${{ inputs.prBranch }}
       run: |
-        echo "::group::Creating pull request"
+        echo "::group::Creating or updating pull request"
         
-        # Generate PR title with updated dependencies
+        # Generate PR title
         if [ -n "$UPDATED_DEPS" ]; then
           PR_TITLE="${PR_TITLE_BASE}: ${UPDATED_DEPS}"
         else
-          TIMESTAMP=$(date +%Y-%m-%d)
-          PR_TITLE="${PR_TITLE_BASE} (${TIMESTAMP})"
+          PR_TITLE="${PR_TITLE_BASE}"
         fi
         
-        # Create PR body
-        PR_BODY="Automated dependency version updates by stackver.
-
-        ## Updated Dependencies
-        ${UPDATED_DEPS:-none}
-
-        ## Changes
-        This PR contains automated updates to dependency versions as detected by stackver. Please review the changes before merging.
-
-        ---
-        *This PR was created automatically by the stackver GitHub Action.*"
+        # Truncate title if too long
+        if [ ${#PR_TITLE} -gt 256 ]; then
+          PR_TITLE="${PR_TITLE:0:253}..."
+        fi
         
-        # Create PR
-        gh pr create \
-          --title "${PR_TITLE}" \
-          --body "${PR_BODY}" \
-          --head ${PR_BRANCH} \
-          --base ${DEFAULT_BRANCH}
+        # Generate PR body (single line to avoid YAML issues)
+        PR_BODY="Automated dependency version updates by stackver. Updated dependencies: ${UPDATED_DEPS:-none}. This PR was created automatically by the stackver GitHub Action."
         
-        echo "::notice::Pull request created: ${PR_TITLE}"
+        # Update existing PR or create new one
+        if [ -n "$EXISTING_PR_NUMBER" ]; then
+          echo "::notice::Updating existing PR #${EXISTING_PR_NUMBER}"
+          gh pr edit ${EXISTING_PR_NUMBER} --title "${PR_TITLE}" --body "${PR_BODY}"
+        else
+          echo "::notice::Creating new PR"
+          gh pr create \
+            --title "${PR_TITLE}" \
+            --body "${PR_BODY}" \
+            --head ${PR_BRANCH} \
+            --base ${DEFAULT_BRANCH}
+        fi
+        
         echo "::endgroup::"
