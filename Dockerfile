@@ -12,7 +12,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /stackver cmd/sta
 
 FROM alpine:latest as app
 
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates git
 
 COPY --from=builder /stackver /bin/stackver
 
