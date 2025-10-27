@@ -78,6 +78,7 @@ runs:
           -v ${PWD}:/stack \
           -w /stack \
           -e GITHUB_TOKEN=${GITHUB_TOKEN} \
+          -e LOG_LEVEL=warn \
           robertlestak/stackver:${STACKVER_VERSION} \
           -f ${STACK_FILE} \
           -d ${DAYS_UNTIL_DANGER} \
@@ -134,6 +135,7 @@ runs:
           -v ${PWD}:/stack \
           -w /stack \
           -e GITHUB_TOKEN=${GITHUB_TOKEN} \
+          -e LOG_LEVEL=warn \
           robertlestak/stackver:${STACKVER_VERSION} \
           -f ${STACK_FILE} \
           -d ${DAYS_UNTIL_DANGER} \
@@ -158,8 +160,8 @@ runs:
         
         echo "HAS_UPDATES=true" >> $GITHUB_ENV
         
-        # Extract updated dependencies
-        UPDATED_DEPS=$(echo "$UPDATE_OUTPUT" | grep -E "(Successfully updated|Would update)" | sed -E 's/.*(Successfully updated|Would update) ([^:]+):.*/\2/' | sort -u | tr '\n' ',' | sed 's/,$//')
+        # Extract updated dependencies from the status table
+        UPDATED_DEPS=$(echo "$UPDATE_OUTPUT" | awk '/update-available/ {print $1}' | sort -u | tr '\n' ',' | sed 's/,$//')
         echo "UPDATED_DEPS=${UPDATED_DEPS}" >> $GITHUB_ENV
         
         # Commit and push changes

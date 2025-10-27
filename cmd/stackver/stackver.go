@@ -88,7 +88,6 @@ func processFileWithUpdate(inFile string, dryRun bool) error {
 			}
 			
 			updatesAvailable = true
-			l.Infof("Update available for %s: %s -> %s", dep.Name, dep.Version(), dep.Status.LatestVersion)
 			
 			if !dryRun {
 				// Update each source file
@@ -110,13 +109,11 @@ func processFileWithUpdate(inFile string, dryRun bool) error {
 					
 					l.Infof("Successfully updated %s: %s -> %s", source.File, currentValue, newValue)
 				}
-			} else {
-				l.Infof("DRY RUN: Would update %s from %s to %s", dep.Name, dep.Version(), dep.Status.LatestVersion)
 			}
 		}
 	}
 	
-	if !updatesAvailable {
+	if !updatesAvailable && !dryRun {
 		l.Info("No updates available")
 	}
 	
