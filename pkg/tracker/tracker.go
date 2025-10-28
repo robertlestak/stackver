@@ -14,6 +14,7 @@ const (
 	ServiceTrackerGitHub    ServiceTrackerName = "github"
 	ServiceTrackerHelm      ServiceTrackerName = "helm"
 	ServiceTrackerGit       ServiceTrackerName = "git"
+	ServiceTrackerOCI       ServiceTrackerName = "oci"
 )
 
 type ServiceTracker interface {
@@ -96,8 +97,9 @@ func (s *ServiceStatus) CalculateStatus(currentVersion string) {
 }
 
 type ServiceTrackerMeta struct {
-	Kind ServiceTrackerName `json:"kind" yaml:"kind"`
-	URI  string             `json:"uri" yaml:"uri"`
+	Kind      ServiceTrackerName `json:"kind" yaml:"kind"`
+	URI       string             `json:"uri" yaml:"uri"`
+	TagPrefix string             `json:"tagPrefix,omitempty" yaml:"tagPrefix,omitempty"`
 }
 
 func (t *ServiceTrackerMeta) Tracker() ServiceTracker {
@@ -110,6 +112,8 @@ func (t *ServiceTrackerMeta) Tracker() ServiceTracker {
 		return &HelmTracker{uri: t.URI}
 	case ServiceTrackerGit:
 		return &GitTracker{uri: t.URI}
+	case ServiceTrackerOCI:
+		return &OCITracker{uri: t.URI}
 	default:
 		// default to EOL tracker
 		t.Kind = ServiceTrackerEndOfLife
@@ -122,11 +126,14 @@ func (t *ServiceTrackerMeta) TrackerWithConfig(acceptPrerelease bool) ServiceTra
 	case ServiceTrackerEndOfLife:
 		return &EndOfLifeDateTracker{uri: t.URI}
 	case ServiceTrackerGitHub:
-		return &GitHubTracker{uri: t.URI, acceptPrerelease: acceptPrerelease}
+		tracker := &GitHubTracker{uri: t.URI, acceptPrerelease: acceptPrerelease, tagPrefix: t.TagPrefix}
+		return tracker
 	case ServiceTrackerHelm:
 		return &HelmTracker{uri: t.URI, acceptPrerelease: acceptPrerelease}
 	case ServiceTrackerGit:
 		return &GitTracker{uri: t.URI, acceptPrerelease: acceptPrerelease}
+	case ServiceTrackerOCI:
+		return &OCITracker{uri: t.URI, acceptPrerelease: acceptPrerelease}
 	default:
 		// default to EOL tracker
 		t.Kind = ServiceTrackerEndOfLife

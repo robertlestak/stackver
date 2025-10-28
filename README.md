@@ -18,6 +18,7 @@ As systems become more microservice oriented, it is critical to stay on top of y
     - [github](#github)
     - [helm](#helm)
     - [git](#git)
+    - [oci](#oci)
   - [Usage](#usage)
     - [Status Mode (Default)](#status-mode-default)
     - [Update Mode](#update-mode)
@@ -103,6 +104,14 @@ spec:
     tracker:
       kind: git
       uri: https://codeberg.org/hjacobs/kube-janitor.git
+      
+  - name: nginx-image
+    sources:
+    - file: k8s/nginx-deployment.yaml
+      selector: $.spec.template.spec.containers[0].image
+    tracker:
+      kind: oci
+      uri: docker.io/library/nginx
 ```
 
 ### Manifest Metadata
@@ -204,7 +213,10 @@ Since `github` will only return the release itself and not meta information such
 tracker:
   kind: github
   uri: cert-manager/cert-manager
+  tagPrefix: v  # Optional: filter tags by prefix (e.g., v1.2.3)
 ```
+
+The optional `tagPrefix` field allows filtering tags by prefix, useful for repositories with multiple tag formats.
 
 *Note*: The GitHub API uses aggressive rate limits, so you'll probably want to set the `GITHUB_TOKEN` environment variable to a [personal access token](https://docs.github.com/en/github/authenticating-to-github/creating-a-personal-access-token). This will increase your rate limit from 60 requests per hour to 5000 requests per hour.
 
@@ -235,7 +247,22 @@ Works with:
 - Self-hosted Git servers
 - Any Git repository with tags
 
-Uses `git ls-remote --tags` for lightweight tag fetching without cloning.
+### oci
+
+The `oci` tracker queries OCI-compliant container registries to track image tag versions. It supports both standard OCI Distribution API and registry-specific APIs (Harbor, etc.).
+
+```yaml
+tracker:
+  kind: oci
+  uri: registry.example.com/myproject/myimage
+```
+
+Works with:
+- Docker Hub, Harbor, Quay.io, ECR, GCR, ACR
+- Any OCI Distribution API compliant registry
+- Self-hosted registries
+
+Uses OCI Distribution API (`/v2/{name}/tags/list`) with fallback to registry-specific endpoints.
 
 ## Usage
 

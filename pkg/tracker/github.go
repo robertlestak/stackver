@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/robertlestak/stackver/pkg/utils"
@@ -15,6 +16,7 @@ type GitHubTracker struct {
 	uri              string
 	hasReleases      bool
 	acceptPrerelease bool
+	tagPrefix        string
 }
 
 type GitHubAPIError struct {
@@ -255,7 +257,16 @@ func (t *GitHubTracker) getTagStatusWithOffset(currentVersion string, offset int
 	
 	var versions []string
 	for _, tag := range tags {
-		versions = append(versions, tag.Name)
+		tagName := tag.Name
+		// Filter by prefix if specified
+		if t.tagPrefix != "" && !strings.HasPrefix(tagName, t.tagPrefix) {
+			continue
+		}
+		// Remove prefix for version comparison
+		if t.tagPrefix != "" {
+			tagName = strings.TrimPrefix(tagName, t.tagPrefix)
+		}
+		versions = append(versions, tagName)
 	}
 	
 	targetVersion := utils.GetVersionAtOffset(versions, offset, t.acceptPrerelease)
@@ -423,6 +434,10 @@ func (t *GitHubTracker) GetStatusWithOffset(currentVersion string, offset int) (
 		}
 	}
 	return stat, nil
+}
+
+func (t *GitHubTracker) SetTagPrefix(prefix string) {
+	t.tagPrefix = prefix
 }
 
 func (t *GitHubTracker) SetAcceptPrerelease(accept bool) {
