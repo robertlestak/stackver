@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/goccy/go-yaml"
-	"github.com/goccy/go-yaml/parser"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -166,27 +166,9 @@ func UpdateValue(filePath, selector, newValue string) error {
 		return fmt.Errorf("failed to read current value: %w", err)
 	}
 
-	var updatedData string
-	if isTemplateFile(originalData) {
-		var err error
-		updatedData, err = updateTemplateValue(string(originalData), selector, currentValue, newValue)
-		if err != nil {
-			return err
-		}
-	} else {
-		path, err := yaml.PathString(selector)
-		if err != nil {
-			return fmt.Errorf("invalid selector %s: %w", selector, err)
-		}
-
-		file, err := parser.ParseBytes(originalData, 0)
-		if err != nil {
-			return fmt.Errorf("failed to parse file %s: %w", filePath, err)
-		}
-		if err := path.ReplaceWithReader(file, strings.NewReader(newValue)); err != nil {
-			return fmt.Errorf("failed to replace path %s in %s: %w", selector, filePath, err)
-		}
-		updatedData = file.String()
+	updatedData, err := updateValueBySelectorLine(string(originalData), selector, currentValue, newValue)
+	if err != nil {
+		return err
 	}
 
 	// Verify we only made one replacement by checking it's different
@@ -208,21 +190,215 @@ func UpdateValue(filePath, selector, newValue string) error {
 	return nil
 }
 
-func updateTemplateValue(content, selector, currentValue, newValue string) (string, error) {
-	parts := strings.Split(selector, ".")
-	if len(parts) == 0 {
+type selectorToken struct {
+	key   string
+	index *int
+}
+
+type pathEntry struct {
+	key    string
+	index  *int
+	indent int
+}
+
+func updateValueBySelectorLine(content, selector, currentValue, newValue string) (string, error) {
+	tokens, err := parseSelector(selector)
+	if err != nil {
+		return "", err
+	}
+	if len(tokens) == 0 {
 		return "", fmt.Errorf("invalid selector format: %s", selector)
 	}
 
-	fieldName := parts[len(parts)-1]
-	pattern := fmt.Sprintf(`(?m)^(\s*%s:\s*)(["']?)%s(["']?)(\s*(?:#.*)?)$`,
-		regexp.QuoteMeta(fieldName),
-		regexp.QuoteMeta(currentValue),
-	)
-	re := regexp.MustCompile(pattern)
-	if !re.MatchString(content) {
-		return "", fmt.Errorf("no replacement made - current value '%s' not found in file", currentValue)
+	lines := strings.SplitAfter(content, "\n")
+	stack := []pathEntry{}
+	leaf := tokens[len(tokens)-1]
+
+	for i, line := range lines {
+		lineWithoutNewline := strings.TrimSuffix(line, "\n")
+		newline := line[len(lineWithoutNewline):]
+		trimmed := strings.TrimSpace(lineWithoutNewline)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		indent := leadingSpaces(lineWithoutNewline)
+		isSequenceItem := strings.HasPrefix(trimmed, "- ")
+		if isSequenceItem {
+			stack = popStack(stack, indent, false)
+			stack = enterSequenceItem(stack, indent)
+			trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+		} else {
+			stack = popStack(stack, indent, true)
+		}
+
+		key, hasValue, ok := parseMappingLine(trimmed)
+		if !ok {
+			continue
+		}
+
+		if key == leaf.key && pathMatches(stack, tokens[:len(tokens)-1]) && hasValue {
+			updatedLine, replaced := replaceValueInLine(lineWithoutNewline, currentValue, newValue)
+			if !replaced {
+				continue
+			}
+			lines[i] = updatedLine + newline
+			return strings.Join(lines, ""), nil
+		}
+
+		if !hasValue && nextTokenMatches(stack, tokens, key) {
+			stack = append(stack, pathEntry{key: key, indent: indent})
+		}
 	}
 
-	return re.ReplaceAllString(content, "${1}${2}"+newValue+"${3}${4}"), nil
+	if updated, ok := updateFieldLineByCurrentValue(content, leaf.key, currentValue, newValue); ok {
+		return updated, nil
+	}
+
+	return "", fmt.Errorf("no replacement made - current value '%s' not found in file", currentValue)
+}
+
+func parseSelector(selector string) ([]selectorToken, error) {
+	selector = strings.TrimPrefix(selector, "$.")
+	if selector == "" || selector == "$" {
+		return nil, fmt.Errorf("invalid selector format: %s", selector)
+	}
+
+	var tokens []selectorToken
+	for _, part := range strings.Split(selector, ".") {
+		token := selectorToken{key: part}
+		if open := strings.Index(part, "["); open >= 0 {
+			close := strings.Index(part[open:], "]")
+			if close < 0 {
+				return nil, fmt.Errorf("invalid selector format: %s", selector)
+			}
+			close += open
+			index, err := strconv.Atoi(part[open+1 : close])
+			if err != nil {
+				return nil, fmt.Errorf("invalid selector index in %s: %w", selector, err)
+			}
+			token.key = part[:open]
+			token.index = &index
+		}
+		tokens = append(tokens, token)
+	}
+	return tokens, nil
+}
+
+func leadingSpaces(line string) int {
+	return len(line) - len(strings.TrimLeft(line, " "))
+}
+
+func popStack(stack []pathEntry, indent int, popSameIndent bool) []pathEntry {
+	for len(stack) > 0 {
+		last := stack[len(stack)-1]
+		if last.indent > indent || (popSameIndent && last.indent >= indent) {
+			stack = stack[:len(stack)-1]
+			continue
+		}
+		break
+	}
+	return stack
+}
+
+func enterSequenceItem(stack []pathEntry, indent int) []pathEntry {
+	if len(stack) == 0 {
+		return stack
+	}
+	parent := &stack[len(stack)-1]
+	if parent.indent != indent {
+		return stack
+	}
+	if parent.index == nil {
+		index := 0
+		parent.index = &index
+		return stack
+	}
+	next := *parent.index + 1
+	parent.index = &next
+	return stack
+}
+
+func parseMappingLine(trimmed string) (string, bool, bool) {
+	parts := strings.SplitN(trimmed, ":", 2)
+	if len(parts) != 2 {
+		return "", false, false
+	}
+	key := strings.Trim(strings.TrimSpace(parts[0]), `"'`)
+	if key == "" {
+		return "", false, false
+	}
+	return key, strings.TrimSpace(parts[1]) != "", true
+}
+
+func nextTokenMatches(stack []pathEntry, tokens []selectorToken, key string) bool {
+	if len(stack) >= len(tokens) {
+		return false
+	}
+	if !pathMatches(stack, tokens[:len(stack)]) {
+		return false
+	}
+	return tokens[len(stack)].key == key
+}
+
+func pathMatches(stack []pathEntry, tokens []selectorToken) bool {
+	if len(stack) != len(tokens) {
+		return false
+	}
+	for i := range tokens {
+		if stack[i].key != tokens[i].key {
+			return false
+		}
+		if tokens[i].index == nil {
+			continue
+		}
+		if stack[i].index == nil || *stack[i].index != *tokens[i].index {
+			return false
+		}
+	}
+	return true
+}
+
+func replaceValueInLine(line, currentValue, newValue string) (string, bool) {
+	colon := strings.Index(line, ":")
+	if colon < 0 {
+		return line, false
+	}
+	valueStart := colon + 1
+	valuePart := line[valueStart:]
+	idx := strings.Index(valuePart, currentValue)
+	if idx < 0 {
+		return line, false
+	}
+	start := valueStart + idx
+	end := start + len(currentValue)
+	return line[:start] + newValue + line[end:], true
+}
+
+func updateFieldLineByCurrentValue(content, fieldName, currentValue, newValue string) (string, bool) {
+	lines := strings.SplitAfter(content, "\n")
+	for i, line := range lines {
+		lineWithoutNewline := strings.TrimSuffix(line, "\n")
+		newline := line[len(lineWithoutNewline):]
+		trimmed := strings.TrimSpace(lineWithoutNewline)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "- ") {
+			trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+		}
+		key, hasValue, ok := parseMappingLine(trimmed)
+		if !ok || !hasValue || key != fieldName {
+			continue
+		}
+
+		updatedLine, replaced := replaceValueInLine(lineWithoutNewline, currentValue, newValue)
+		if !replaced {
+			continue
+		}
+		lines[i] = updatedLine + newline
+		return strings.Join(lines, ""), true
+	}
+	return "", false
 }

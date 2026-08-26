@@ -236,7 +236,7 @@ func (t *GitHubTracker) getTagStatusWithOffset(currentVersion string, offset int
 		return ServiceStatus{}, err
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != 200 {
 		var apiError GitHubAPIError
 		if err := json.NewDecoder(resp.Body).Decode(&apiError); err == nil {
@@ -244,7 +244,7 @@ func (t *GitHubTracker) getTagStatusWithOffset(currentVersion string, offset int
 		}
 		return ServiceStatus{}, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
 	}
-	
+
 	var tags []GitHubTag
 	err = json.NewDecoder(resp.Body).Decode(&tags)
 	if err != nil {
@@ -254,26 +254,19 @@ func (t *GitHubTracker) getTagStatusWithOffset(currentVersion string, offset int
 	if len(tags) == 0 {
 		return ServiceStatus{}, fmt.Errorf("no tags found")
 	}
-	
+
 	var versions []string
 	for _, tag := range tags {
-		tagName := tag.Name
-		// Filter by prefix if specified
-		if t.tagPrefix != "" && !strings.HasPrefix(tagName, t.tagPrefix) {
-			continue
+		if version, ok := versionFromTagName(tag.Name, t.tagPrefix); ok {
+			versions = append(versions, version)
 		}
-		// Remove prefix for version comparison
-		if t.tagPrefix != "" {
-			tagName = strings.TrimPrefix(tagName, t.tagPrefix)
-		}
-		versions = append(versions, tagName)
 	}
-	
+
 	targetVersion := utils.GetVersionAtOffset(versions, offset, t.acceptPrerelease)
 	if targetVersion == "" {
 		return ServiceStatus{}, fmt.Errorf("no suitable version found")
 	}
-	
+
 	stat := ServiceStatus{
 		LatestVersion: utils.TrimVersionPrefix(targetVersion),
 		Link:          t.Link(),
@@ -309,7 +302,7 @@ func (t *GitHubTracker) getCommitStatus(currentVersion string) (ServiceStatus, e
 		return ServiceStatus{}, err
 	}
 	defer resp.Body.Close()
-	
+
 	// Check for API errors first
 	if resp.StatusCode != 200 {
 		var apiError GitHubAPIError
@@ -318,7 +311,7 @@ func (t *GitHubTracker) getCommitStatus(currentVersion string) (ServiceStatus, e
 		}
 		return ServiceStatus{}, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
 	}
-	
+
 	var releases []GitHubCommit
 	err = json.NewDecoder(resp.Body).Decode(&releases)
 	if err != nil {
@@ -367,7 +360,7 @@ func (t *GitHubTracker) getReleaseStatusWithOffset(currentVersion string, offset
 		return ServiceStatus{}, err
 	}
 	defer resp.Body.Close()
-	
+
 	// Check for API errors first
 	if resp.StatusCode != 200 {
 		var apiError GitHubAPIError
@@ -376,7 +369,7 @@ func (t *GitHubTracker) getReleaseStatusWithOffset(currentVersion string, offset
 		}
 		return ServiceStatus{}, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
 	}
-	
+
 	var releases []GitHubRelease
 	err = json.NewDecoder(resp.Body).Decode(&releases)
 	if err != nil {
@@ -386,19 +379,21 @@ func (t *GitHubTracker) getReleaseStatusWithOffset(currentVersion string, offset
 	if len(releases) == 0 {
 		return ServiceStatus{}, fmt.Errorf("no releases found")
 	}
-	
+
 	// Extract all version strings
 	var versions []string
 	for _, release := range releases {
-		versions = append(versions, release.TagName)
+		if version, ok := versionFromTagName(release.TagName, t.tagPrefix); ok {
+			versions = append(versions, version)
+		}
 	}
-	
+
 	// Get version at offset
 	targetVersion := utils.GetVersionAtOffset(versions, offset, t.acceptPrerelease)
 	if targetVersion == "" {
 		return ServiceStatus{}, fmt.Errorf("no suitable version found")
 	}
-	
+
 	stat := ServiceStatus{
 		LatestVersion: utils.TrimVersionPrefix(targetVersion),
 		Link:          t.Link(),
@@ -413,6 +408,16 @@ func (t *GitHubTracker) GetStatus(currentVersion string) (ServiceStatus, error) 
 	return t.GetStatusWithOffset(currentVersion, 0)
 }
 
+func versionFromTagName(tagName, tagPrefix string) (string, bool) {
+	if tagPrefix == "" {
+		return tagName, true
+	}
+	if !strings.HasPrefix(tagName, tagPrefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(tagName, tagPrefix), true
+}
+
 func (t *GitHubTracker) GetStatusWithOffset(currentVersion string, offset int) (ServiceStatus, error) {
 	l := log.WithFields(log.Fields{
 		"tracker": "github.date",
@@ -425,6 +430,9 @@ func (t *GitHubTracker) GetStatusWithOffset(currentVersion string, offset int) (
 		l.Debug("no releases found, trying tags")
 		stat, err = t.getTagStatusWithOffset(currentVersion, offset)
 		if err != nil {
+			if t.tagPrefix != "" {
+				return ServiceStatus{}, err
+			}
 			l.Debug("no tags found, falling back to commits")
 			t.hasReleases = false
 			stat, err = t.getCommitStatus(currentVersion)
